@@ -1,0 +1,188 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Poppins", sans-serif;
+  --font-mono: "Fira Code", monospace;
+
+  --color-navy-dark: #0A1F44;
+  --color-sky-accent: #38BDF8;
+  --color-navy-light: #162F5D;
+  --color-slate-bg: #F5F7FA;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Smooth fade transitions */
+.fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Government header tint */
+.gov-header-tint {
+  background: linear-gradient(135deg, var(--color-navy-dark) 40%, var(--color-navy-light) 100%);
+}
+
+/* Custom High-Contrast Dark Mode Skin Overrides (Night Shift Compliant) */
+html.dark {
+  background-color: #030712 !important;
+}
+
+html.dark body, 
+html.dark .bg-slate-bg {
+  background-color: #030712 !important;
+  color: #f1f5f9 !important;
+}
+
+html.dark .bg-white {
+  background-color: #0b1329 !important;
+  color: #f1f5f9 !important;
+  border-color: #1e293b !important;
+}
+
+html.dark .border, 
+html.dark .border-gray-100, 
+html.dark .border-gray-150, 
+html.dark .border-gray-200 {
+  border-color: #1e293b !important;
+}
+
+html.dark .text-gray-900,
+html.dark .text-gray-850,
+html.dark .text-gray-800,
+html.dark .text-gray-750,
+html.dark .text-gray-700 {
+  color: #f8fafc !important;
+}
+
+html.dark .text-gray-650,
+html.dark .text-gray-600,
+html.dark .text-gray-500,
+html.dark .text-gray-400 {
+  color: #94a3b8 !important;
+}
+
+html.dark .hover\:bg-gray-50:hover,
+html.dark .hover\:bg-slate-50:hover,
+html.dark tr.hover\:bg-gray-50:hover {
+  background-color: #162447 !important;
+}
+
+html.dark input, 
+html.dark select, 
+html.dark textarea {
+  background-color: #0d1527 !important;
+  color: #f8fafc !important;
+  border-color: #334155 !important;
+}
+
+html.dark input::placeholder, 
+html.dark textarea::placeholder {
+  color: #475569 !important;
+}
+
+html.dark aside .bg-white {
+  background-color: #090f20 !important;
+}
+
+html.dark footer.bg-white {
+  background-color: #0b1329 !important;
+  border-color: #1e293b !important;
+}
+
+html.dark .divide-y > :not([hidden]) ~ :not([hidden]) {
+  border-color: #1e293b !important;
+}
+
+/* Specific component dark overrides */
+html.dark .bg-[#F5F7FA] {
+  background-color: #162447 !important;
+  color: #f8fafc !important;
+}
+
+html.dark .text-[#0A1F44] {
+  color: #38BDF8 !important;
+}
+
+html.dark .bg-[#0A1F44] {
+  background-color: #090f23 !important;
+  border: 1px solid #1e293b;
+}
+
+html.dark .bg-[#0A1F44]\/5 {
+  background-color: rgba(56, 189, 248, 0.1) !important;
+}
+
+html.dark .text-[#0A1F44]\/5 {
+  color: rgba(56, 189, 248, 0.1) !important;
+}
+
+/* Print optimization for government physical briefings */
+@media print {
+  body, html, .bg-slate-bg, .min-h-screen {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  
+  /* Hide standard non-printed web app panels */
+  header, footer, aside, button, select, input, .print\:hidden {
+    display: none !important;
+  }
+  
+  /* Expand main layout to full widths on paper */
+  main, .max-w-7xl, .flex-1, .w-full {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  
+  /* Un-grid layouts into standard blocks for clear multi-page print flow */
+  .grid {
+    display: block !important;
+  }
+  
+  /* Add card spacer margins */
+  .bg-white, .rounded-xl {
+    background: #ffffff !important;
+    color: #000000 !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: none !important;
+    margin-bottom: 2rem !important;
+    page-break-inside: avoid !important;
+  }
+  
+  /* Ensure printing graphs matches crisp colors */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}

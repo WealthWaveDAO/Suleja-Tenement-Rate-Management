@@ -1,0 +1,6 @@
+{
+  "name": "Suleja Tenement Rate Management",
+  "description": "Digital Tenement Rate Management & Revenue Automation Platform for Suleja Local Government Area, Niger State, Nigeria.",
+  "requestFramePermissions": ["geolocation", "camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
