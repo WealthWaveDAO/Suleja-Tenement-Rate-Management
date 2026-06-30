@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import * as d3 from 'd3';
 import { 
   Building2, 
@@ -20,8 +20,27 @@ import {
   Map,
   BadgeAlert
 } from 'lucide-react';
+import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin, InfoWindow, useMap } from '@vis.gl/react-google-maps';
 import { Property, TaxPaymentStatus } from '../types';
 import { SULEJA_WARDS } from '../data';
+
+const API_KEY =
+  process.env.GOOGLE_MAPS_PLATFORM_KEY ||
+  (import.meta as any).env?.VITE_GOOGLE_MAPS_PLATFORM_KEY ||
+  (globalThis as any).GOOGLE_MAPS_PLATFORM_KEY ||
+  '';
+const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY';
+
+function MapRecenter({ center, zoom }: { center: { lat: number; lng: number }; zoom: number }) {
+  const map = useMap();
+  useEffect(() => {
+    if (map) {
+      map.panTo(center);
+      map.setZoom(zoom);
+    }
+  }, [map, center, zoom]);
+  return null;
+}
 
 interface GISMappingProps {
   properties: Property[];
@@ -31,6 +50,9 @@ interface GISMappingProps {
 
 export default function GISMapping({ properties, selectedProperty, onClearSelection }: GISMappingProps) {
   
+  const [mapMode, setMapMode] = useState<'interactive' | 'simulated'>(hasValidKey ? 'interactive' : 'simulated');
+  const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number }>({ lat: 9.1805, lng: 7.185 });
+  const [mapZoom, setMapZoom] = useState<number>(13);
   const [activeWardFilter, setActiveWardFilter] = useState<string>('');
   const [activeStatusFilter, setActiveStatusFilter] = useState<TaxPaymentStatus | ''>('');
   const [gisSearchQuery, setGisSearchQuery] = useState<string>('');
@@ -40,6 +62,70 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
   const [showHeatmap, setShowHeatmap] = useState<boolean>(true); // default to true so users see it immediately! Or we can toggle it. Let's start with true.
   const [heatmapType, setHeatmapType] = useState<'compliance' | 'delinquency'>('delinquency');
   const [hoveredProperty, setHoveredProperty] = useState<Property | null>(null);
+  
+  const [showWardBoundaries, setShowWardBoundaries] = useState<boolean>(true);
+  const [showComplianceHotspots, setShowComplianceHotspots] = useState<boolean>(true);
+  const [showPropertyPins, setShowPropertyPins] = useState<boolean>(true);
+
+  // Geolocation States
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [geolocationError, setGeolocationError] = useState<string | null>(null);
+  const [isLocating, setIsLocating] = useState<boolean>(false);
+
+  const projectedUserLocation = useMemo(() => {
+    if (!userLocation) return null;
+    const minLat = 9.15;
+    const maxLat = 9.22;
+    const minLng = 7.15;
+    const maxLng = 7.24;
+    
+    // Scale user location into 100% SVG coordinates
+    const x = ((userLocation.longitude - minLng) / (maxLng - minLng)) * 100;
+    const y = 100 - (((userLocation.latitude - minLat) / (maxLat - minLat)) * 100);
+    
+    const isOut = userLocation.latitude < minLat || userLocation.latitude > maxLat || userLocation.longitude < minLng || userLocation.longitude > maxLng;
+    
+    return {
+      x: Math.max(5, Math.min(x, 95)),
+      y: Math.max(5, Math.min(y, 95)),
+      isOut,
+      lat: userLocation.latitude,
+      lng: userLocation.longitude
+    };
+  }, [userLocation]);
+
+  const handleLocateMe = () => {
+    setIsLocating(true);
+    setGeolocationError(null);
+    if (!navigator.geolocation) {
+      setGeolocationError("Geolocation is not supported by this browser.");
+      setIsLocating(false);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setIsLocating(false);
+        setUserLocation({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude
+        });
+        setZoomScale(1.5);
+        setPanX(0);
+        setPanY(0);
+      },
+      (error) => {
+        setIsLocating(false);
+        console.warn("Geolocation query failed, placing centered demo agent coordinate.", error);
+        // Fallback to a demo location inside Suleja so they can test the feature beautifully
+        setUserLocation({
+          latitude: 9.1804 + (Math.random() - 0.5) * 0.02,
+          longitude: 7.1904 + (Math.random() - 0.5) * 0.02
+        });
+        setGeolocationError("Unable to retrieve GPS. Centering demo agent coordinates inside Suleja.");
+      },
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+    );
+  };
 
   // Dynamic ward-level compliance rate calculations for heatmaps
   const wardComplianceStats = useMemo(() => {
@@ -117,6 +203,19 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
 
   // Synchronise if external selection occurred
   const activePropertyFocus = selectedProperty || localFocusedProperty;
+
+  useEffect(() => {
+    if (activePropertyFocus) {
+      setMapCenter({ lat: activePropertyFocus.latitude, lng: activePropertyFocus.longitude });
+      setMapZoom(16);
+    } else if (activeWardFilter) {
+      const selectedWard = SULEJA_WARDS.find(w => w.name === activeWardFilter);
+      if (selectedWard) {
+        setMapCenter({ lat: selectedWard.centerLat, lng: selectedWard.centerLng });
+        setMapZoom(15);
+      }
+    }
+  }, [activePropertyFocus, activeWardFilter]);
 
   // Filter properties mapped onto our virtual GIS coordinates
   const filteredGISProps = useMemo(() => {
@@ -219,8 +318,47 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
               </div>
             </div>
 
+            {/* Map Mode Selector */}
+            <div className="flex flex-wrap gap-2 items-center mt-2 sm:mt-0">
+              <div className="flex items-center bg-[#162F5D]/85 border border-white/10 rounded-lg p-0.5 text-[10px] font-extrabold shadow-md font-sans">
+                <button
+                  type="button"
+                  onClick={() => setMapMode('interactive')}
+                  className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                    mapMode === 'interactive' 
+                      ? 'bg-sky-550 text-white shadow-xs' 
+                      : 'text-sky-250 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  🛰️ Interactive Map
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMapMode('simulated')}
+                  className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                    mapMode === 'simulated' 
+                      ? 'bg-sky-550 text-white shadow-xs' 
+                      : 'text-sky-250 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  ⚡ Geodesic Overlay
+                </button>
+              </div>
+            </div>
+
             {/* Scale operations buttons */}
-            <div className="flex gap-1 bg-[#162F5D] border border-white/5 rounded-lg p-0.5 shadow-md">
+              <div className="flex gap-1 items-center bg-[#162F5D] border border-white/5 rounded-lg p-0.5 shadow-md">
+              <button
+                type="button"
+                onClick={handleLocateMe}
+                disabled={isLocating}
+                title="Retrieve browser GPS location"
+                className="p-1.5 hover:bg-white/10 rounded-md text-emerald-300 hover:text-emerald-200 cursor-pointer flex items-center gap-1 border-r border-white/10"
+              >
+                <MapPin className={`h-4 w-4 ${isLocating ? 'animate-bounce' : ''}`} />
+                <span className="text-[9px] font-mono font-bold uppercase tracking-wider pr-1">Locate Me</span>
+              </button>
+
               <button
                 onClick={() => setZoomScale(z => Math.min(z + 0.25, 3))}
                 title="Increase Zoom Scale"
@@ -245,15 +383,142 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
           </div>
 
           {/* Core Visual Geodesic SVG Map Area */}
-          <div className="relative z-10 flex-1 my-4 flex items-center justify-center bg-[#060c15] border border-white/5 rounded-lg overflow-hidden min-h-[350px]">
-            
-            <div 
-              className="relative w-full max-w-lg aspect-square select-none transition-transform"
-              style={{
-                transform: `scale(${zoomScale}) translate(${panX}px, ${panY}px)`,
-                transformOrigin: 'center center'
-              }}
-            >
+          <div className="relative z-10 flex-1 my-4 flex items-center justify-center bg-[#060c15] border border-white/5 rounded-lg overflow-hidden min-h-[420px] h-[450px]">
+            {mapMode === 'interactive' && hasValidKey && (
+              <div className="w-full h-full absolute inset-0 text-slate-900 select-text">
+                <APIProvider apiKey={API_KEY} version="weekly">
+                  <GoogleMap
+                    defaultCenter={mapCenter}
+                    defaultZoom={mapZoom}
+                    mapId="DEMO_MAP_ID"
+                    internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+                    style={{ width: '100%', height: '100%' }}
+                    mapTypeControl={true}
+                  >
+                    <MapRecenter center={mapCenter} zoom={mapZoom} />
+                    
+                    {filteredGISProps.map((p) => {
+                      const statusColor = 
+                        p.paymentStatus === 'Paid' ? '#10B981' : 
+                        p.paymentStatus === 'Pending' ? '#F59E0B' : '#EF4444';
+                      const isActive = activePropertyFocus?.id === p.id;
+                      
+                      return (
+                        <AdvancedMarker
+                          key={`gmarker-${p.id}`}
+                          position={{ lat: p.latitude, lng: p.longitude }}
+                          onClick={() => setLocalFocusedProperty(p)}
+                        >
+                          <Pin 
+                            background={statusColor} 
+                            borderColor={isActive ? '#FFFFFF' : '#060c15'}
+                            glyphColor="#FFFFFF"
+                            scale={isActive ? 1.25 : 0.9}
+                          />
+                        </AdvancedMarker>
+                      );
+                    })}
+                  </GoogleMap>
+                </APIProvider>
+
+                {/* Standard focused card overlay on Google Map */}
+                {activePropertyFocus && (
+                  <div id="gisFocusOverlay" className="absolute bottom-4 left-4 right-4 md:left-auto md:w-80 bg-[#0c1b30] border border-white/10 rounded-xl p-4 shadow-2xl space-y-3 z-30 fade-in select-text">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <span className="inline-block rounded bg-[#38BDF8]/10 text-[#38BDF8] px-1.5 py-0.5 text-[9px] font-mono font-bold text-left">
+                          {activePropertyFocus.id}
+                        </span>
+                        <h4 className="font-display font-bold text-xs sm:text-sm text-white mt-1 truncate text-left">{activePropertyFocus.ownerName}</h4>
+                      </div>
+                      <button 
+                        onClick={handleCloseFocusCard}
+                        className="p-1 text-gray-400 hover:text-white rounded-md cursor-pointer shrink-0"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-1.5 text-[11px] text-gray-300 font-sans text-left">
+                      <div className="truncate"><b>Address:</b> {activePropertyFocus.address}</div>
+                      <div><b>Ward Zone:</b> {activePropertyFocus.ward}</div>
+                      <div><b>Assessed Rate:</b> <span className="font-mono text-[#38BDF8] font-bold">₦{activePropertyFocus.tenementRate.toLocaleString()}</span></div>
+                    </div>
+
+                    <div className="flex items-center justify-between border-t border-white/5 pt-2 text-[10px] mt-2">
+                      <span className={`inline-flex rounded px-1.5 py-0.5 font-bold uppercase ${
+                        activePropertyFocus.paymentStatus === 'Paid' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
+                      }`}>
+                        {activePropertyFocus.paymentStatus}
+                      </span>
+                      
+                      <span className="text-[9px] font-mono text-gray-500">GPS: {activePropertyFocus.latitude.toFixed(4)}, {activePropertyFocus.longitude.toFixed(4)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {mapMode === 'interactive' && !hasValidKey && (
+              <div className="flex flex-col items-center justify-center p-6 text-center w-full h-full bg-[#0c1b30] border border-sky-500/15 rounded-lg relative z-20">
+                <MapPin className="h-10 w-10 text-sky-450 mb-3 animate-bounce" />
+                <h3 className="font-display font-bold text-sm text-white mb-2">Google Maps Integration Required</h3>
+                <p className="text-gray-300 text-[11px] max-w-sm leading-relaxed mb-4 font-sans">
+                  To display Suleja property records on a live, drag-and-drop satellite street map with real-world topography overlays:
+                </p>
+                <div className="text-left bg-white/5 border border-white/10 rounded-lg p-3.5 space-y-2.5 max-w-sm text-[10.5px] text-gray-300 font-sans mb-4">
+                  <div>
+                    <span className="font-bold text-sky-300 block mb-0.5">1. Get a standard API Key:</span>
+                    <a 
+                      href="https://console.cloud.google.com/google/maps-apis/start?utm_campaign=gmp-code-assist-ais" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-sky-400 hover:underline font-semibold"
+                    >
+                      console.cloud.google.com/google/maps-apis
+                    </a>
+                  </div>
+                  <div>
+                    <span className="font-bold text-sky-300 block mb-0.5">2. Provide the key in AI Studio:</span>
+                    <span className="text-gray-350">
+                      Open <b>Settings</b> (⚙️ gear icon) → <b>Secrets</b> → add <code>GOOGLE_MAPS_PLATFORM_KEY</code> → paste key.
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setMapMode('simulated')}
+                  className="bg-white/10 hover:bg-white/15 text-white border border-white/10 rounded-lg px-3.5 py-1.5 text-xs font-bold cursor-pointer transition font-sans"
+                >
+                  Use Simulated Geodesic Overlay
+                </button>
+              </div>
+            )}
+
+            {mapMode === 'simulated' && (
+              <>
+                {/* Geolocation Alerts Overlay */}
+                {geolocationError && (
+                  <div className="absolute top-3 left-3 right-3 z-30 bg-slate-900/90 hover:bg-slate-900 backdrop-blur-md border border-amber-500/40 text-amber-300 font-sans text-[10.5px] font-semibold py-1.5 px-3 rounded-lg flex items-center justify-between shadow-lg gap-2 pointer-events-auto">
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                      📍 {geolocationError}
+                    </span>
+                    <button 
+                      onClick={() => setGeolocationError(null)} 
+                      className="font-extrabold text-white hover:text-amber-250 shrink-0 px-1 py-0.5 rounded cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+                
+                <div 
+                  className="relative w-full max-w-lg aspect-square select-none transition-transform"
+                  style={{
+                    transform: `scale(${zoomScale}) translate(${panX}px, ${panY}px)`,
+                    transformOrigin: 'center center'
+                  }}
+                >
               <svg 
                 viewBox="0 0 100 100" 
                 className="w-full h-full"
@@ -343,8 +608,33 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                   </>
                 )}
 
+                {/* Compliance Hotspots Layer (glowing halo regions of fully paid properties) */}
+                {showComplianceHotspots && (
+                  <g id="heatmap-layer-compliance-hotspots" filter="url(#heatmap-blur)" opacity={0.6}>
+                    {properties
+                      .filter(p => p.paymentStatus === 'Paid')
+                      .map((p, idx) => {
+                        const minLat = 9.15;
+                        const maxLat = 9.22;
+                        const minLng = 7.15;
+                        const maxLng = 7.24;
+                        const x = ((p.longitude - minLng) / (maxLng - minLng)) * 100;
+                        const y = 100 - (((p.latitude - minLat) / (maxLat - minLat)) * 100);
+                        return (
+                          <circle
+                            key={`comp-hotspot-${p.id}-${idx}`}
+                            cx={Math.max(2, Math.min(x, 98))}
+                            cy={Math.max(2, Math.min(y, 98))}
+                            r="5"
+                            fill="#10b981"
+                          />
+                        );
+                      })}
+                  </g>
+                )}
+
                 {/* Simulated Ward Boundaries connectors */}
-                {simulatedWardOutlines.map((w, idx) => {
+                {showWardBoundaries && simulatedWardOutlines.map((w, idx) => {
                   // Draw a polyline connecting adjacent centerpoints to mimic official zoning lines
                   const nextW = simulatedWardOutlines[(idx + 1) % simulatedWardOutlines.length];
                   return (
@@ -352,7 +642,7 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                       key={`line-${idx}`}
                       x1={w.x} y1={w.y} 
                       x2={nextW.x} y2={nextW.y} 
-                      stroke="#1e3a8a" strokeWidth="0.25" strokeDasharray="1 3"
+                      stroke="#4F46E5" strokeWidth="0.3" strokeDasharray="1 3"
                     />
                   );
                 })}
@@ -375,7 +665,7 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                 ))}
 
                 {/* Plotted GIS Pin coordinates */}
-                {mapCoordinates.map((node) => {
+                {showPropertyPins && mapCoordinates.map((node) => {
                   const isActive = activePropertyFocus?.id === node.property.id;
                   const statusColor = 
                     node.property.paymentStatus === 'Paid' ? '#10B981' : 
@@ -417,6 +707,40 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                     </g>
                   );
                 })}
+
+                {/* Geolocation 'Your Location' Marker with pulsing blue halo */}
+                {projectedUserLocation && (
+                  <g className="cursor-pointer">
+                    {/* Ring ripple */}
+                    <circle 
+                      cx={projectedUserLocation.x} 
+                      cy={projectedUserLocation.y} 
+                      r="4.2" 
+                      fill="none" 
+                      stroke="#38BDF8" 
+                      strokeWidth="0.8" 
+                      className="animate-ping"
+                      style={{ transformOrigin: `${projectedUserLocation.x}px ${projectedUserLocation.y}px` }}
+                    />
+                    {/* Solid outer cursor halo */}
+                    <circle 
+                      cx={projectedUserLocation.x} 
+                      cy={projectedUserLocation.y} 
+                      r="2.2" 
+                      fill="#38BDF8" 
+                      stroke="#ffffff" 
+                      strokeWidth="0.5"
+                    />
+                    {/* Inner core */}
+                    <circle 
+                      cx={projectedUserLocation.x} 
+                      cy={projectedUserLocation.y} 
+                      r="1" 
+                      fill="#4F46E5" 
+                    />
+                    <title>{`Your Location: ${projectedUserLocation.lat.toFixed(6)}, ${projectedUserLocation.lng.toFixed(6)}`}</title>
+                  </g>
+                )}
               </svg>
 
               {/* Interactive Tooltip on Hover */}
@@ -490,6 +814,7 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                 </div>
               </div>
             )}
+            </>)}
           </div>
 
           {/* Status Color coding Legends */}
@@ -601,6 +926,43 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                     {s} Mode
                   </button>
                 ))}
+              </div>
+            </div>
+
+            {/* GIS Layers Overlay Selection */}
+            <div>
+              <label className="block text-[10px] uppercase font-bold text-gray-400 mb-1.5 flex items-center gap-1">
+                <Layers className="h-3.5 w-3.5 text-[#38BDF8]" />
+                Active Map Layers
+              </label>
+              <div className="space-y-2.5 bg-slate-50 border border-gray-205 rounded-lg p-3">
+                <label className="flex items-center justify-between cursor-pointer select-none text-xs font-semibold text-gray-700">
+                  <span>Ward Boundaries</span>
+                  <input
+                    type="checkbox"
+                    checked={showWardBoundaries}
+                    onChange={(e) => setShowWardBoundaries(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-[#0A1F44] focus:ring-[#0A1F44] cursor-pointer"
+                  />
+                </label>
+                <label className="flex items-center justify-between cursor-pointer select-none text-xs font-semibold text-gray-700">
+                  <span>Compliance Hotspots</span>
+                  <input
+                    type="checkbox"
+                    checked={showComplianceHotspots}
+                    onChange={(e) => setShowComplianceHotspots(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                  />
+                </label>
+                <label className="flex items-center justify-between cursor-pointer select-none text-xs font-semibold text-gray-700">
+                  <span>Property Pins</span>
+                  <input
+                    type="checkbox"
+                    checked={showPropertyPins}
+                    onChange={(e) => setShowPropertyPins(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-[#0A1F44] focus:ring-[#0A1F44] cursor-pointer"
+                  />
+                </label>
               </div>
             </div>
 

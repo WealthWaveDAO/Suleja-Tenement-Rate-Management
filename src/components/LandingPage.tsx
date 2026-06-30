@@ -4,22 +4,25 @@
  */
 
 import React, { useState } from 'react';
-import { Landmark, Search, Calculator, ShieldAlert, HeartHandshake, CheckCircle2, CreditCard, ChevronRight, BarChart3, HelpCircle, MapPin, Compass, MessageSquare, Send, X, Sparkles } from 'lucide-react';
-import { Property, Invoice } from '../types';
+import { Landmark, Search, Calculator, ShieldAlert, HeartHandshake, CheckCircle2, CreditCard, ChevronRight, BarChart3, HelpCircle, MapPin, Compass, MessageSquare, Send, X, Sparkles, LogOut } from 'lucide-react';
+import { Property, Invoice, User } from '../types';
 import ZumaRockBanner from './ZumaRockBanner';
 
 interface LandingPageProps {
   properties: Property[];
   invoices: Invoice[];
   onOpenLogin: () => void;
+  onOpenTaxpayerLogin: () => void;
   onQuickPay: (propertyId: string) => void;
+  currentUser?: User | null;
+  onLogout?: () => void;
 }
 
-export default function LandingPage({ properties, invoices, onOpenLogin, onQuickPay }: LandingPageProps) {
+export default function LandingPage({ properties, invoices, onOpenLogin, onOpenTaxpayerLogin, onQuickPay, currentUser = null, onLogout }: LandingPageProps) {
   // State managers for AI Taxpayer chatbot
   const [isOpenChat, setIsOpenChat] = useState(false);
   const [chatInput, setChatInput] = useState('');
-  const [chatMessages, setChatMessages] = useState<Array<{ sender: 'user' | 'bot'; text: string; time: string }>>([
+  const [chatMessages, setChatMessages] = useState<Array<{ sender: 'user' | 'bot'; text: string; time: string; groundingLinks?: Array<{ title: string; url: string }> }>>([
     {
       sender: 'bot',
       text: 'Peace be upon you! Greetings. I am your Suleja LGA Taxpayer Assistant. Ask me anything about rate percentages, property codes, or Kuda Bank transfer procedures.',
@@ -27,6 +30,8 @@ export default function LandingPage({ properties, invoices, onOpenLogin, onQuick
     }
   ]);
   const [isTyping, setIsTyping] = useState(false);
+  const [useThinking, setUseThinking] = useState(false);
+  const [useMaps, setUseMaps] = useState(false);
 
   const handleSendChatMessage = async (presetText?: string) => {
     const textToSend = presetText || chatInput;
@@ -42,6 +47,20 @@ export default function LandingPage({ properties, invoices, onOpenLogin, onQuick
     if (!presetText) setChatInput('');
     setIsTyping(true);
 
+    let lat: number | undefined = undefined;
+    let lng: number | undefined = undefined;
+    if (useMaps && navigator.geolocation) {
+      try {
+        const coords = await new Promise<GeolocationCoordinates>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition((pos) => resolve(pos.coords), reject);
+        });
+        lat = coords.latitude;
+        lng = coords.longitude;
+      } catch (err) {
+        console.warn("Could not retrieve precise location, falling back to general search:", err);
+      }
+    }
+
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -50,7 +69,11 @@ export default function LandingPage({ properties, invoices, onOpenLogin, onQuick
         },
         body: JSON.stringify({
           prompt: textToSend,
-          history: chatMessages.map(m => ({ sender: m.sender === 'bot' ? 'model' : 'user', text: m.text }))
+          history: chatMessages.map(m => ({ sender: m.sender === 'bot' ? 'model' : 'user', text: m.text })),
+          thinkingMode: useThinking,
+          mapsGrounding: useMaps,
+          latitude: lat,
+          longitude: lng
         }),
       });
 
@@ -62,7 +85,8 @@ export default function LandingPage({ properties, invoices, onOpenLogin, onQuick
       setChatMessages(prev => [...prev, {
         sender: 'bot',
         text: data.reply || "Representative query logged but reply returned blank.",
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        groundingLinks: data.groundingLinks
       }]);
     } catch (err: any) {
       console.error("Suleja Bot exception:", err);
@@ -143,16 +167,26 @@ export default function LandingPage({ properties, invoices, onOpenLogin, onQuick
             <button 
               id="btn-nav-login"
               onClick={onOpenLogin}
-              className="rounded-lg bg-[#0A1F44] px-5 py-2 text-sm font-semibold text-white shadow-md transition-colors hover:bg-opacity-90 hover:text-[#38BDF8]"
+              className="rounded-lg bg-[#0A1F44] px-3.5 py-2.5 sm:px-5 sm:py-2 text-xs sm:text-sm font-semibold text-white shadow-md transition-colors hover:bg-opacity-90 hover:text-[#38BDF8] min-h-[44px] flex items-center justify-center cursor-pointer select-none"
             >
-              Staff & Taxpayer Login
+              {currentUser ? 'Return to Console' : 'Portal Login'}
             </button>
+            {currentUser && onLogout && (
+              <button 
+                id="btn-nav-logout"
+                onClick={onLogout}
+                className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 sm:px-5 sm:py-2 text-xs sm:text-sm font-semibold text-red-700 hover:text-red-800 hover:bg-red-100 shadow-xs transition-colors min-h-[44px] flex items-center justify-center gap-1.5 cursor-pointer select-none"
+              >
+                <LogOut className="h-4 w-4" />
+                <span>Log Out</span>
+              </button>
+            )}
           </div>
         </div>
       </nav>
 
       {/* Zuma Rock Atmospheric Banner Hero Section */}
-      <ZumaRockBanner onOpenLogin={onOpenLogin} />
+      <ZumaRockBanner onOpenLogin={onOpenLogin} onOpenTaxpayerLogin={onOpenTaxpayerLogin} currentUser={currentUser} />
 
       {/* Feature Section */}
       <section id="features" className="py-20">
@@ -340,9 +374,9 @@ export default function LandingPage({ properties, invoices, onOpenLogin, onQuick
                           return (
                             <div 
                               key={property.id} 
-                              className="rounded-lg border border-gray-200 p-3 sm:p-4 bg-gray-50 flex items-center justify-between gap-4 transition-all hover:border-[#38BDF8]"
+                              className="rounded-lg border border-gray-200 p-3 sm:p-4 bg-gray-50 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all hover:border-[#38BDF8]"
                             >
-                              <div className="min-w-0">
+                              <div className="min-w-0 w-full sm:w-auto">
                                 <span className="inline-block rounded-md bg-[#0A1F44]/5 px-2 py-0.5 text-[10px] font-bold font-mono text-[#0A1F44] mb-1">
                                   {property.id}
                                 </span>
@@ -353,7 +387,7 @@ export default function LandingPage({ properties, invoices, onOpenLogin, onQuick
                                 </span>
                               </div>
 
-                              <div className="flex flex-col items-end shrink-0 gap-2">
+                              <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center w-full sm:w-auto shrink-0 gap-2 border-t sm:border-t-0 border-gray-200/50 pt-2.5 sm:pt-0">
                                 <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
                                   isPaid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                                 }`}>
@@ -362,7 +396,7 @@ export default function LandingPage({ properties, invoices, onOpenLogin, onQuick
                                 {!isPaid && (
                                   <button
                                     onClick={() => onQuickPay(property.id)}
-                                    className="rounded-lg bg-[#38BDF8] hover:bg-opacity-95 text-[#0A1F44] px-4 py-1.5 text-xs font-bold shadow-xs transition-transform hover:scale-103"
+                                    className="rounded-lg bg-[#38BDF8] hover:bg-opacity-95 text-[#0A1F44] px-4 py-1.5 text-xs font-bold shadow-xs transition-transform hover:scale-103 cursor-pointer"
                                   >
                                     Pay Bill
                                   </button>
@@ -409,7 +443,9 @@ export default function LandingPage({ properties, invoices, onOpenLogin, onQuick
               </div>
             </div>
             <div className="flex gap-4">
-              <button onClick={onOpenLogin} className="text-xs text-gray-300 hover:text-[#38BDF8]">Dashboard Portal</button>
+              <button onClick={onOpenLogin} className="text-xs text-gray-300 hover:text-[#38BDF8] cursor-pointer">
+                {currentUser ? 'Return to Console' : 'Dashboard Portal'}
+              </button>
               <span className="text-gray-500">•</span>
               <a href="#features" className="text-xs text-gray-300 hover:text-[#38BDF8]">Service Features</a>
               <span className="text-gray-500">•</span>
@@ -465,6 +501,25 @@ export default function LandingPage({ properties, invoices, onOpenLogin, onQuick
                         : 'bg-[#0A1F44] text-white rounded-tr-none shadow-sm leading-normal'
                     }`}>
                       <p className="whitespace-pre-line">{m.text}</p>
+                      {m.groundingLinks && m.groundingLinks.length > 0 && (
+                        <div className="mt-2.5 pt-2 border-t border-gray-100 space-y-1.5">
+                          <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Verified Sources & Maps:</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {m.groundingLinks.map((link, lIdx) => (
+                              <a
+                                key={lIdx}
+                                href={link.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 hover:underline bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded border border-blue-100"
+                              >
+                                <MapPin className="h-2.5 w-2.5 shrink-0" />
+                                {link.title}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <span className="text-[8px] text-gray-400 mt-1 font-mono">{m.time}</span>
                   </div>
@@ -494,6 +549,31 @@ export default function LandingPage({ properties, invoices, onOpenLogin, onQuick
                   {p}
                 </button>
               ))}
+            </div>
+
+            {/* Feature Toggles Toolbar */}
+            <div className="flex items-center justify-between px-3 py-1.5 bg-[#F1F5F9] border-t border-gray-150 shrink-0 text-[10px] font-bold text-slate-600">
+              <span className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">AI MODULES:</span>
+              <div className="flex gap-3">
+                <label className="flex items-center gap-1 cursor-pointer hover:text-[#0A1F44]">
+                  <input
+                    type="checkbox"
+                    checked={useThinking}
+                    onChange={(e) => setUseThinking(e.target.checked)}
+                    className="rounded border-gray-300 text-[#0A1F44] cursor-pointer h-3 w-3"
+                  />
+                  <span>Reasoning</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer hover:text-[#0A1F44]">
+                  <input
+                    type="checkbox"
+                    checked={useMaps}
+                    onChange={(e) => setUseMaps(e.target.checked)}
+                    className="rounded border-gray-300 text-[#0A1F44] cursor-pointer h-3 w-3"
+                  />
+                  <span>Maps</span>
+                </label>
+              </div>
             </div>
 
             {/* Input typing section */}

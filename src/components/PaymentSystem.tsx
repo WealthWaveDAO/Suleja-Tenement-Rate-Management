@@ -5,7 +5,9 @@
 
 import React, { useState } from 'react';
 import { jsPDF } from 'jspdf';
-import QRCode from 'qrcode';
+import * as QRCodeLib from 'qrcode';
+const QRCode = (QRCodeLib as any).default || QRCodeLib;
+import { motion, AnimatePresence } from 'motion/react';
 import { exportOfficialReceiptPDF } from '../utils/receiptGenerator';
 import { 
   Receipt, 
@@ -25,7 +27,11 @@ import {
   Coins,
   Send,
   MessageSquare,
-  Smartphone
+  Smartphone,
+  QrCode,
+  Award,
+  Download,
+  FileText
 } from 'lucide-react';
 import { Invoice, Property, UserRole } from '../types';
 
@@ -124,6 +130,15 @@ export default function PaymentSystem({
       type: 'Reminder'
     }
   ]);
+  
+  // Property deep-linked QR billing states
+  const [showQrBillingModal, setShowQrBillingModal] = useState(false);
+  const [qrPropertyId, setQrPropertyId] = useState('');
+  const [qrOwnerName, setQrOwnerName] = useState('');
+
+  // Tax Certificate Modal States
+  const [showCertificateModal, setShowCertificateModal] = useState(false);
+  const [selectedCertInvoice, setSelectedCertInvoice] = useState<Invoice | null>(null);
 
   const handleTriggerSms = (inv: Invoice) => {
     setActiveSmsInvoice(inv);
@@ -142,6 +157,56 @@ export default function PaymentSystem({
     setShowSmsModal(true);
   };
 
+  const [serverWebhookLogs, setServerWebhookLogs] = useState<Array<{
+    id: string;
+    timestamp: string;
+    payload: any;
+    direction: 'inbound' | 'callback';
+    event: string;
+  }>>([]);
+
+  const fetchServerSmsLogs = async () => {
+    try {
+      const res = await fetch('/api/twilio/logs');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.smsLogs && data.smsLogs.length > 0) {
+          const mappedOut = data.smsLogs.map((l: any) => ({
+            id: l.id,
+            phone: l.phone,
+            message: l.message,
+            timestamp: l.timestamp,
+            invoiceId: l.invoiceId,
+            type: l.type as 'Reminder' | 'Receipt'
+          }));
+          setSmsSentLogs(prev => {
+            const defaultItem = prev.filter(p => p.id === 'SMS-1');
+            const merged = [...mappedOut];
+            defaultItem.forEach(d => {
+              if (!merged.some(m => m.id === d.id)) merged.push(d);
+            });
+            return merged;
+          });
+        }
+        if (data.webhookLogs) {
+          setServerWebhookLogs(data.webhookLogs);
+        }
+      }
+    } catch (err) {
+      console.warn("[Twilio logs load skip]", err);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchServerSmsLogs();
+  }, []);
+
+  React.useEffect(() => {
+    if (showSmsModal) {
+      fetchServerSmsLogs();
+    }
+  }, [showSmsModal]);
+
   const sendSmsViaSimulatedTwilio = async () => {
     if (!smsPhone || !smsMessage) return;
     setIsSendingSms(true);
@@ -149,18 +214,81 @@ export default function PaymentSystem({
     // 1-second simulation delay of Twilio API handshake
     await new Promise(resolve => setTimeout(resolve, 1000));
     
-    const newLog = {
-      id: `SMS-${Date.now()}`,
-      phone: smsPhone,
-      message: smsMessage,
-      timestamp: new Date().toLocaleTimeString() + ' ' + new Date().toISOString().split('T')[0],
-      invoiceId: activeSmsInvoice?.id || 'GLOBAL',
-      type: (activeSmsInvoice?.status === 'Paid' ? 'Receipt' : 'Reminder') as 'Reminder' | 'Receipt'
-    };
+    try {
+      const res = await fetch('/api/twilio/sms-send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: smsPhone,
+          message: smsMessage,
+          invoiceId: activeSmsInvoice?.id || 'GLOBAL',
+          type: activeSmsInvoice?.status === 'Paid' ? 'Receipt' : 'Reminder'
+        })
+      });
+      if (res.ok) {
+        await fetchServerSmsLogs();
+      } else {
+        throw new Error("HTTP error on send");
+      }
+    } catch (e) {
+      console.warn("Utilizing offline SMS local fallback collection:", e);
+      const newLog = {
+        id: `SMS-${Date.now()}`,
+        phone: smsPhone,
+        message: smsMessage,
+        timestamp: new Date().toLocaleTimeString() + ' ' + new Date().toISOString().split('T')[0],
+        invoiceId: activeSmsInvoice?.id || 'GLOBAL',
+        type: (activeSmsInvoice?.status === 'Paid' ? 'Receipt' : 'Reminder') as 'Reminder' | 'Receipt'
+      };
+      setSmsSentLogs(prev => [newLog, ...prev]);
+    }
 
-    setSmsSentLogs(prev => [newLog, ...prev]);
     setIsSendingSms(false);
     setShowSmsModal(false);
+  };
+
+  const [isSimulatingWebhook, setIsSimulatingWebhook] = useState(false);
+
+  const simulateCallbackWebhook = async () => {
+    setIsSimulatingWebhook(true);
+    try {
+      await fetch('/api/twilio/sms-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          MessageSid: `SM${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
+          SmsStatus: 'delivered',
+          To: smsPhone || '+234 803 456 7890',
+          From: 'SULEJA_REV',
+          ErrorCode: '0'
+        })
+      });
+      await fetchServerSmsLogs();
+    } catch (e) {
+      console.error(e);
+    }
+    setIsSimulatingWebhook(false);
+  };
+
+  const simulateInboundSmsWebhook = async () => {
+    setIsSimulatingWebhook(true);
+    try {
+      await fetch('/api/twilio/sms-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          MessageSid: `SM${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
+          From: smsPhone || '+234 803 456 7890',
+          To: '+18884949114',
+          Body: `PAYMENT SLG-${activeSmsInvoice?.propertyId || '2026-00042'}`,
+          AccountSid: 'AC49b1ff3ad72ce10aef'
+        })
+      });
+      await fetchServerSmsLogs();
+    } catch (e) {
+      console.error(e);
+    }
+    setIsSimulatingWebhook(false);
   };
 
   // Filters
@@ -347,44 +475,95 @@ export default function PaymentSystem({
         </div>
       </div>
 
+      {/* ⚡ Batch Billing Generation / Distribution Progress Feedback Animations */}
+      <AnimatePresence>
+        {isGeneratingBulk && (
+          <motion.div
+            initial={{ opacity: 0, y: -15, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: 'auto' }}
+            exit={{ opacity: 0, y: -15, height: 0 }}
+            transition={{ duration: 0.3 }}
+            className="overflow-hidden mb-4"
+          >
+            <div className="bg-[#E0F2FE] border-2 border-dashed border-[#0284C7]/30 rounded-xl p-4 flex items-center justify-between text-xs text-[#0369A1] font-sans">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-[#BAE6FD] text-[#0369A1] rounded-lg animate-spin">
+                  <RefreshCw className="h-4 w-4" />
+                </div>
+                <div>
+                  <strong className="block text-sm font-display text-[#0369A1] font-black">Executing Batch Billing Run...</strong>
+                  <p className="text-[11px] font-medium text-[#0284C7] mt-0.5">Please wait, compiling municipal records, generating dynamic QR links, and mailing invoices to taxpayers.</p>
+                </div>
+              </div>
+              <span className="text-[10px] bg-[#BAE6FD] text-[#0369A1] px-2.5 py-1 rounded font-black font-mono animate-pulse">DISPATCHING</span>
+            </div>
+          </motion.div>
+        )}
+
+        {isGeneratingSuccess && (
+          <motion.div
+            initial={{ opacity: 0, y: -15, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: 'auto' }}
+            exit={{ opacity: 0, y: -15, height: 0 }}
+            transition={{ duration: 0.3 }}
+            className="overflow-hidden mb-4"
+          >
+            <div className="bg-[#D1FAE5] border border-emerald-300 rounded-xl p-4 flex items-center justify-between text-xs text-[#065F46] font-sans">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-[#A7F3D0] text-[#065F46] rounded-lg">
+                  <Check className="h-4 w-4 text-emerald-600 font-bold" />
+                </div>
+                <div>
+                  <strong className="block text-sm font-display text-[#065F46] font-black">Batch Billings Successfully Dispatched!</strong>
+                  <p className="text-[11px] font-medium text-emerald-700 mt-0.5">All designated Suleja tenement invoices have been successfully emailed, SMS-notified, and recorded to local secure ledger database.</p>
+                </div>
+              </div>
+              <span className="text-[10px] bg-[#A7F3D0] text-[#065F46] px-2.5 py-1 rounded font-black font-mono">COMPLETE</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Stats bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white rounded-xl p-4 border border-gray-100 flex items-center gap-4">
-          <div className="h-10 w-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-            <Check className="h-5 w-5" />
+      {userRole !== 'Taxpayer' && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-white rounded-xl p-4 border border-gray-100 flex items-center gap-4">
+            <div className="h-10 w-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <Check className="h-5 w-5" />
+            </div>
+            <div>
+              <span className="block text-[10px] uppercase font-bold text-gray-400">Paid Invoices</span>
+              <span className="text-lg font-mono font-bold text-gray-900">
+                {invoices.filter(i => i.status === 'Paid').length} bills
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="block text-[10px] uppercase font-bold text-gray-400">Paid Invoices</span>
-            <span className="text-lg font-mono font-bold text-gray-900">
-              {invoices.filter(i => i.status === 'Paid').length} bills
-            </span>
-          </div>
-        </div>
 
-        <div className="bg-white rounded-xl p-4 border border-gray-100 flex items-center gap-4">
-          <div className="h-10 w-10 rounded-lg bg-red-50 text-red-600 flex items-center justify-center">
-            <Clock className="h-5 w-5" />
+          <div className="bg-white rounded-xl p-4 border border-gray-100 flex items-center gap-4">
+            <div className="h-10 w-10 rounded-lg bg-red-50 text-red-600 flex items-center justify-center">
+              <Clock className="h-5 w-5" />
+            </div>
+            <div>
+              <span className="block text-[10px] uppercase font-bold text-gray-400">Overdue Balances</span>
+              <span className="text-lg font-mono font-bold text-red-600">
+                ₦{invoices.filter(i => i.status === 'Overdue').reduce((sum, i) => sum + i.amount, 0).toLocaleString()}
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="block text-[10px] uppercase font-bold text-gray-400">Overdue Balances</span>
-            <span className="text-lg font-mono font-bold text-red-600">
-              ₦{invoices.filter(i => i.status === 'Overdue').reduce((sum, i) => sum + i.amount, 0).toLocaleString()}
-            </span>
-          </div>
-        </div>
 
-        <div className="bg-white rounded-xl p-4 border border-gray-100 flex items-center gap-4">
-          <div className="h-10 w-10 rounded-lg bg-[#0A1F44]/5 text-[#0A1F44] flex items-center justify-center">
-            <Receipt className="h-5 w-5" />
-          </div>
-          <div>
-            <span className="block text-[10px] uppercase font-bold text-gray-400">General Billing Sum</span>
-            <span className="text-lg font-mono font-bold text-gray-900">
-              ₦{invoices.reduce((sum, i) => sum + i.amount, 0).toLocaleString()}
-            </span>
+          <div className="bg-white rounded-xl p-4 border border-gray-100 flex items-center gap-4">
+            <div className="h-10 w-10 rounded-lg bg-[#0A1F44]/5 text-[#0A1F44] flex items-center justify-center">
+              <Receipt className="h-5 w-5" />
+            </div>
+            <div>
+              <span className="block text-[10px] uppercase font-bold text-gray-400">General Billing Sum</span>
+              <span className="text-lg font-mono font-bold text-gray-900">
+                ₦{invoices.reduce((sum, i) => sum + i.amount, 0).toLocaleString()}
+              </span>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Invoices List table card */}
       <div className="bg-white rounded-xl border border-gray-150 shadow-xs overflow-hidden select-text text-xs">
@@ -494,13 +673,24 @@ export default function PaymentSystem({
                       <td className="px-4 py-3 text-center">
                         <div className="flex items-center justify-center gap-1.5 flex-wrap">
                           {isPaid ? (
-                            <div className="flex gap-1">
+                            <div className="flex gap-1 flex-wrap">
                               <button
                                 onClick={() => handleOpenReceipt(inv)}
                                 className="inline-flex items-center gap-1 rounded bg-[#0A1F44] hover:bg-[#0A1F44]/90 text-white px-2 py-0.5 font-bold text-[10px] cursor-pointer"
                               >
                                 <Printer className="h-3 w-3 text-[#38BDF8]" />
                                 Receipt
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedCertInvoice(inv);
+                                  setShowCertificateModal(true);
+                                }}
+                                className="inline-flex items-center gap-1 rounded bg-[#38BDF8] hover:bg-[#0EA5E9] text-[#0A1F44] px-2 py-0.5 font-bold text-[10px] cursor-pointer shadow-xs border border-sky-300 transition-colors"
+                                title="Generate and view Printable Tax Clearance Certificate"
+                              >
+                                <Award className="h-3 w-3 text-[#0A1F44]" />
+                                Cert
                               </button>
                               {userRole !== 'Taxpayer' && (
                                 <button
@@ -556,6 +746,20 @@ export default function PaymentSystem({
                               <span>SMS</span>
                             </button>
                           )}
+
+                          {/* QR Code Deep link Generator */}
+                          <button
+                            onClick={() => {
+                              setQrPropertyId(inv.propertyId);
+                              setQrOwnerName(inv.ownerName);
+                              setShowQrBillingModal(true);
+                            }}
+                            className="inline-flex items-center gap-1 rounded px-2.5 py-1 text-[10px] font-extrabold transition-all cursor-pointer bg-slate-100 hover:bg-slate-200 text-gray-750 border border-gray-200"
+                            title="Generate Billing QR Code Deep Link"
+                          >
+                            <QrCode className="h-3 w-3 text-sky-600" />
+                            <span>QR</span>
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -656,6 +860,32 @@ export default function PaymentSystem({
                   <div className="bg-white border rounded-lg p-3.5 text-[11px] font-mono whitespace-pre-wrap text-gray-700 leading-relaxed shadow-xs border-gray-150 overflow-hidden select-text break-words">
                     {email.body}
                   </div>
+
+                  {email.invoiceId && email.status === 'Cleared & Confirmed' && (
+                    <div className="bg-indigo-50/50 border border-indigo-150/40 p-3 rounded-lg flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mt-1.5">
+                      <div className="flex items-center gap-2.5">
+                        <FileText className="h-5 w-5 text-indigo-650 shrink-0" />
+                        <div className="text-left min-w-0">
+                          <div className="text-[11px] font-bold text-gray-850 truncate">Suleja_Official_Receipt_Cleared_ID_{email.invoiceId}.pdf</div>
+                          <div className="text-[9.5px] text-gray-500 font-bold font-mono">Size: ~25 KB • Format: PDF Document</div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const matchingInv = invoices.find(i => i.id === email.invoiceId);
+                          const matchingProp = properties.find(p => p.id === email.propertyId);
+                          if (matchingInv && matchingProp) {
+                            await exportOfficialReceiptPDF(matchingInv, matchingProp, userName || "Salma Salihu", userRole || "LGA Accountant");
+                          }
+                        }}
+                        className="inline-flex items-center justify-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-1.5 text-xs font-bold cursor-pointer transition shadow-sm shrink-0 font-sans"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        <span>Download Receipt PDF</span>
+                      </button>
+                    </div>
+                  )}
                   
                   <div className="flex justify-end pt-1">
                     <span className="text-[9px] text-[#0A1F44]/60 font-bold tracking-wider uppercase font-sans flex items-center gap-1">
@@ -1261,7 +1491,9 @@ export default function PaymentSystem({
                 </div>
                 <div>
                   <span className="block text-gray-500 text-[9px] uppercase">Webhook Target URI</span>
-                  <span className="text-gray-250 font-bold">https://api.twilio.com/</span>
+                  <span className="text-gray-250 font-bold truncate block" title={window.location.origin + "/api/twilio/sms-webhook"}>
+                    {window.location.origin}/api/twilio/sms-webhook
+                  </span>
                 </div>
                 <div className="col-span-2 pt-1 border-t border-slate-900 flex justify-between items-center mt-1.5 text-emerald-400">
                   <span className="flex items-center gap-1">
@@ -1339,6 +1571,75 @@ export default function PaymentSystem({
                 </button>
               </div>
 
+              {/* Webhook Interactive Testing Sandbox */}
+              <div className="border rounded-xl p-4 bg-slate-50 space-y-3.5 border-dashed border-[#F22F46]/40">
+                <div>
+                  <h5 className="font-extrabold text-[11px] text-[#F22F46] uppercase tracking-wider flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block animate-ping" />
+                    Webhooks & Web Services Sandbox
+                  </h5>
+                  <p className="text-[10px] text-gray-500 mt-0.5 leading-relaxed">
+                    Trigger custom simulations interacting live with the Express server's webhooks.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={isSimulatingWebhook}
+                    onClick={simulateCallbackWebhook}
+                    className="bg-white hover:bg-slate-100 border border-slate-200 text-[#0A1F44] py-2 px-3 rounded-lg font-bold text-[10px] flex items-center justify-center gap-1.5 cursor-pointer shadow-xs select-none transition-all disabled:opacity-50"
+                  >
+                    <Smartphone className="h-3.5 w-3.5 text-indigo-500" />
+                    Simulate Callback
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSimulatingWebhook}
+                    onClick={simulateInboundSmsWebhook}
+                    className="bg-white hover:bg-slate-100 border border-slate-200 text-[#0A1F44] py-2 px-3 rounded-lg font-bold text-[10px] flex items-center justify-center gap-1.5 cursor-pointer shadow-xs select-none transition-all disabled:opacity-50"
+                  >
+                    <Send className="h-3.5 w-3.5 text-green-500" />
+                    Simulate Inbound
+                  </button>
+                </div>
+
+                {/* Live Webhook traffic log list */}
+                <div className="space-y-1.5">
+                  <span className="text-[9.5px] font-extrabold text-gray-400 uppercase tracking-widest block">
+                    Server Webhook Real-time Feeds ({serverWebhookLogs.length})
+                  </span>
+                  {serverWebhookLogs.length === 0 ? (
+                    <div className="text-center italic text-[9px] text-gray-400 py-2 border rounded-lg bg-white bg-opacity-60 border-dashed">
+                      No webhook queries processed yet. Fire a test simulation above.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
+                      {serverWebhookLogs.map((log) => (
+                        <div key={log.id} className="p-2 border rounded-lg bg-white relative text-[9.5px] text-left shadow-2xs">
+                          <div className="flex justify-between items-center mb-1 font-mono text-[8px]">
+                            <span className={`font-bold uppercase ${log.direction === 'inbound' ? 'text-green-600' : 'text-blue-600'}`}>
+                              {log.direction === 'inbound' ? ' Inbound User SMS' : ' Status Callback'}
+                            </span>
+                            <span className="text-gray-400">{log.timestamp}</span>
+                          </div>
+                          <p className="text-gray-750 font-bold leading-tight font-sans text-[10px] mb-1">{log.event}</p>
+                          <details className="mt-1">
+                            <summary className="text-[8px] text-gray-400 font-bold hover:text-gray-650 cursor-pointer select-none">
+                              Inspect JSON Payload
+                            </summary>
+                            <pre className="p-1.5 mt-1 rounded bg-slate-950 text-[8px] font-mono text-emerald-400 overflow-x-auto whitespace-pre-wrap">
+                              {JSON.stringify(log.payload, null, 2)}
+                            </pre>
+                          </details>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Historic Sent logs for audit trail */}
               <div className="border-t pt-3.5 space-y-2">
                 <div className="flex justify-between items-center mb-1">
@@ -1403,6 +1704,226 @@ export default function PaymentSystem({
           </div>
         </div>
       )}
+
+      {/* Property Bill Citizen Quick-Pay QR Modal */}
+      {showQrBillingModal && qrPropertyId && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 select-none">
+          <div className="bg-white rounded-2xl border border-gray-150 max-w-sm w-full overflow-hidden shadow-2xl relative text-black text-xs font-sans">
+            <div className="bg-[#0A1F44] p-5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2 font-sans font-bold">
+                <QrCode className="h-5 w-5 text-[#38BDF8]" />
+                <div>
+                  <span className="block text-[9px] font-mono font-bold text-[#38BDF8]/80">TENEMENT SYSTEM QUICK-PAY</span>
+                  <h4 className="font-bold text-sm tracking-tight text-white mb-0">Bill Deep-Link QR Code</h4>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowQrBillingModal(false);
+                  setQrPropertyId('');
+                }}
+                className="text-white hover:text-gray-300 font-bold text-lg cursor-pointer border-0 bg-transparent p-0"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 text-center space-y-4 bg-slate-50">
+              <p className="text-gray-500 font-medium text-[11px] leading-relaxed">
+                Scan this official municipal billing QR code to instantly bypass general logins and deep-link directly into the citizen payment checkout interface for this tenement property.
+              </p>
+
+              {/* QR Code Container */}
+              <div className="inline-block bg-white p-4 rounded-xl border border-gray-150 shadow-md">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
+                    `${window.location.origin}${window.location.pathname}?quickpay=${qrPropertyId}`
+                  )}`}
+                  alt={`QR Code for Property ${qrPropertyId}`}
+                  referrerPolicy="no-referrer"
+                  className="w-[180px] h-[180px] object-contain mx-auto"
+                />
+                <span className="block text-[9.5px] font-mono text-gray-500 font-bold mt-2.5 uppercase tracking-wider bg-slate-100 p-1 rounded border">
+                  Property ID: {qrPropertyId}
+                </span>
+                <span className="block text-[9px] font-semibold text-gray-400 mt-1">
+                  Owner: {qrOwnerName}
+                </span>
+              </div>
+
+              <div className="bg-sky-50 border border-sky-100 rounded-xl p-3 text-left">
+                <h5 className="font-bold text-[#0A1F44] text-[10px] uppercase font-sans">Deep Link Address:</h5>
+                <p className="font-mono text-[9px] text-sky-850 break-all select-all font-semibold mt-1 bg-white p-1.5 rounded border">
+                  {`${window.location.origin}${window.location.pathname}?quickpay=${qrPropertyId}`}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-gray-100 text-center border-t text-[9px] uppercase font-extrabold text-[#0A1F44]">
+              ● Suleja LGA Board of Internal Revenue
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 📜 Printable, Formal PDF-style Tax Clearance Certificate Modal */}
+      {showCertificateModal && selectedCertInvoice && (() => {
+        const matchingProp = properties.find(p => p.id === selectedCertInvoice.propertyId);
+        const certNo = `TCC-2026-SUL-${selectedCertInvoice.id.replace('INV-', '')}`;
+        return (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 print:bg-white print:p-0 print:static print:h-auto select-text text-slate-850">
+            <div className="bg-white rounded-2xl max-w-2xl w-full border border-gray-250 shadow-2xl overflow-hidden print:shadow-none print:border-0 print:max-w-none print:w-full print:rounded-none">
+              
+              {/* Header actions (Hidden during printing) */}
+              <div className="bg-slate-50 border-b border-gray-200 p-4 flex justify-between items-center print:hidden">
+                <div className="flex items-center gap-2">
+                  <Award className="h-5 w-5 text-sky-600" />
+                  <span className="font-bold text-xs text-[#0A1F44]">Tax Clearance Certificate Issuer</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => window.print()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0A1F44] hover:bg-[#0A1F44]/90 text-white font-bold text-xs cursor-pointer shadow-sm active:translate-y-[1px] transition-all"
+                  >
+                    <Printer className="h-3.5 w-3.5 text-[#38BDF8]" />
+                    Print / save PDF
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowCertificateModal(false);
+                      setSelectedCertInvoice(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-750 font-bold text-xs cursor-pointer transition-colors"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+
+              {/* Certificate Canvas Body */}
+              <div className="p-8 relative bg-amber-50/5 print:p-0">
+                <div className="border-4 border-double border-[#0A1F44] p-8 relative rounded-xl bg-white select-text">
+                  
+                  {/* Decorative corner accents */}
+                  <div className="absolute top-2 left-2 border-t-2 border-l-2 border-[#0A1F44] w-6 h-6 rounded-tl-sm pointer-events-none" />
+                  <div className="absolute top-2 right-2 border-t-2 border-r-2 border-[#0A1F44] w-6 h-6 rounded-tr-sm pointer-events-none" />
+                  <div className="absolute bottom-2 left-2 border-b-2 border-l-2 border-[#0A1F44] w-6 h-6 rounded-bl-sm pointer-events-none" />
+                  <div className="absolute bottom-2 right-2 border-b-2 border-r-2 border-[#0A1F44] w-6 h-6 rounded-br-sm pointer-events-none" />
+
+                  {/* Coat of arms emblem placeholder */}
+                  <div className="text-center mb-5 flex flex-col items-center">
+                    <div className="w-16 h-16 rounded-full bg-[#0A1F44] text-amber-400 flex items-center justify-center font-bold relative shadow-md border-2 border-amber-300 mb-2">
+                      <Award className="h-9 w-9 text-amber-300" />
+                      <div className="absolute -bottom-1.5 bg-amber-400 text-[#0A1F44] text-[8px] font-black px-1.5 py-0.5 rounded-sm select-none border">
+                        SULEJA
+                      </div>
+                    </div>
+                    <span className="block text-[8px] font-bold tracking-[0.2em] uppercase text-gray-400">Federal Republic of Nigeria</span>
+                    <h3 className="font-display font-black text-[#0A1F44] text-base leading-tight mt-1">SULEJA LOCAL GOVERNMENT AREA</h3>
+                    <span className="block text-[9px] font-bold text-sky-850 tracking-wider">BOARD OF INTERNAL REVENUE DEPUTY CHAMBER</span>
+                  </div>
+
+                  {/* Document general Title */}
+                  <div className="border-y border-dashed border-[#0A1F44]/40 py-2.5 text-center mb-6">
+                    <h2 className="font-display font-black text-[#0A1F44] tracking-[0.25em] text-[15px] uppercase">
+                      Tenement Tax Clearance Certificate
+                    </h2>
+                    <div className="flex justify-between items-center text-[10px] font-sans font-bold text-gray-500 mt-1 max-w-sm mx-auto px-4">
+                      <span>Serial Code: <strong className="font-mono text-gray-700">{certNo}</strong></span>
+                      <span>•</span>
+                      <span>Clearance Year: <span className="text-emerald-700 font-bold">2026 Season</span></span>
+                    </div>
+                  </div>
+
+                  {/* Affirmation body text */}
+                  <p className="text-center text-xs text-gray-700 font-sans leading-relaxed mb-6 max-w-lg mx-auto font-medium">
+                    This is to formally certify and affirm that the tenement building entity described below is completely up-to-date and registered on the sovereign property registers of Suleja LGA, Niger State. The appropriate yearly rates, statutory tenement charges, and assessed municipal utility dues have been cleared in full by the property owner, fully reconciled with the treasury of the council, and cleared of all liabilities.
+                  </p>
+
+                  {/* Certified Property Audit Details Group */}
+                  <div className="bg-slate-50/50 border border-slate-200 rounded-xl p-4 mb-6 text-xs text-left max-w-lg mx-auto grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+                    <div>
+                      <span className="block text-[9px] font-bold uppercase text-gray-400 tracking-wider">Property Owner Name</span>
+                      <strong className="text-[#0A1F44] text-[11px] truncate block font-sans font-black">{selectedCertInvoice.ownerName}</strong>
+                    </div>
+                    <div>
+                      <span className="block text-[9px] font-bold uppercase text-gray-400 tracking-wider">Property Registry Code</span>
+                      <strong className="font-mono text-gray-700 text-[11px] block">{selectedCertInvoice.propertyId}</strong>
+                    </div>
+                    <div className="md:col-span-2 border-t border-slate-100 pt-2">
+                      <span className="block text-[9px] font-bold uppercase text-gray-400 tracking-wider">Property Physical Address</span>
+                      <strong className="text-gray-700 text-[11px] font-sans font-bold block">
+                        {matchingProp?.address || 'Suleja Municipal Ward Central'}, {matchingProp?.ward || 'Sabo Gari Ward'}, Niger State
+                      </strong>
+                    </div>
+                    <div className="border-t border-slate-100 pt-2">
+                      <span className="block text-[9px] font-bold uppercase text-gray-400 tracking-wider">Rated Typology Class</span>
+                      <strong className="text-gray-700 font-sans font-bold block">{matchingProp?.propertyType || 'Residential Category'}</strong>
+                    </div>
+                    <div className="border-t border-slate-100 pt-2">
+                      <span className="block text-[9px] font-bold uppercase text-gray-400 tracking-wider">Full Amount Cleared</span>
+                      <strong className="text-emerald-700 font-mono text-[11.5px] block font-bold">₦{selectedCertInvoice.amount.toLocaleString()} NGN</strong>
+                    </div>
+                    <div className="md:col-span-2 border-t border-slate-100 pt-2.5 flex justify-between items-center">
+                      <div>
+                        <span className="block text-[9px] font-bold uppercase text-gray-400 tracking-wider">Settlement Auth Code</span>
+                        <span className="font-mono text-gray-600 font-bold bg-[#E0F2FE] text-[#0369A1] px-1.5 py-0.5 rounded border border-sky-100 text-[9.5px]">
+                          {selectedCertInvoice.id}-OK-SUL
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="block text-[9px] font-bold uppercase text-gray-400 tracking-wider">Payment Cleared Date</span>
+                        <strong className="text-gray-700 text-[11px] font-sans">
+                          {selectedCertInvoice.dueDate} (Automated)
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Signatures and Seals Section */}
+                  <div className="mt-8 flex flex-col md:flex-row items-center justify-between gap-6 max-w-lg mx-auto pt-4 border-t border-gray-150 relative">
+                    
+                    {/* Left: Stamp */}
+                    <div className="flex flex-col items-center text-center">
+                      <div className="h-10 w-32 border-b border-gray-400 flex items-center justify-center font-serif text-[10px] text-gray-400 italic">
+                        Chairman Suleja LGA
+                      </div>
+                      <span className="text-[8px] font-black uppercase text-gray-450 tracking-widest mt-1.5">Executive Chairman</span>
+                      <span className="text-[7.5px] text-gray-400 font-bold">Suleja Local Council Board</span>
+                    </div>
+
+                    {/* Middle: Decal Seal Stamp */}
+                    <div className="flex items-center justify-center select-none shrink-0">
+                      <div className="w-18 h-18 rounded-full border-4 border-dashed border-emerald-650 flex flex-col items-center justify-center text-center p-1 bg-emerald-50/10 rotate-[-12deg] shadow-3xs">
+                        <div className="text-[8.5px] font-black text-emerald-700 font-mono leading-none tracking-widest">SULEJA LGA</div>
+                        <Award className="h-4.5 w-4.5 text-emerald-600 my-0.5" />
+                        <div className="text-[7.5px] font-bold text-emerald-600 leading-none">PAID & CLEAR</div>
+                      </div>
+                    </div>
+
+                    {/* Right: Stamp */}
+                    <div className="flex flex-col items-center text-center">
+                      <div className="h-10 w-32 border-b border-gray-400 flex items-center justify-center font-serif text-[10px] text-gray-400 italic">
+                        Admin Officer Revenue
+                      </div>
+                      <span className="text-[8px] font-black uppercase text-gray-455 tracking-widest mt-1.5">Director of Taxation</span>
+                      <span className="text-[7.5px] text-gray-400 font-bold">Suleja Municipal Treasury</span>
+                    </div>
+
+                  </div>
+
+                </div>
+              </div>
+
+              {/* Footer legalities */}
+              <div className="bg-slate-100 p-3 text-center border-t text-[9px] uppercase tracking-wider text-slate-500 font-black select-none flex justify-between px-6">
+                <span>● INTEGRITY AND SELF-RELIANCE DECLARED</span>
+                <span>SYSTEM ID: {selectedCertInvoice.id}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

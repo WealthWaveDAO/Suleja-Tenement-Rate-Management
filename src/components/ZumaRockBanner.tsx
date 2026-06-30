@@ -5,13 +5,16 @@
 
 import React from 'react';
 import { Landmark, ArrowRight, CheckCircle2, MapPin, Compass } from 'lucide-react';
+import { User } from '../types';
 const zumaRockImage = '/src/assets/images/zuma_rock_atmospheric_1781044432807.png';
 
 interface ZumaRockBannerProps {
   onOpenLogin: () => void;
+  onOpenTaxpayerLogin?: () => void;
+  currentUser?: User | null;
 }
 
-export default function ZumaRockBanner({ onOpenLogin }: ZumaRockBannerProps) {
+export default function ZumaRockBanner({ onOpenLogin, onOpenTaxpayerLogin, currentUser = null }: ZumaRockBannerProps) {
   return (
     <div id="zuma-rock-banner-hero" className="relative h-[620px] sm:h-[650px] lg:h-[680px] w-full flex items-center justify-center overflow-hidden border-b border-gray-200">
       {/* Background Image with motion styling */}
@@ -58,11 +61,21 @@ export default function ZumaRockBanner({ onOpenLogin }: ZumaRockBannerProps) {
                 <span>Pay Your Bill Online</span>
                 <ArrowRight className="ml-2 h-4 w-4 text-[#0A1F44]" />
               </a>
+              {!currentUser && onOpenTaxpayerLogin && (
+                <button
+                  type="button"
+                  onClick={onOpenTaxpayerLogin}
+                  className="inline-flex items-center justify-center rounded-xl bg-emerald-600 px-6 py-3.5 text-sm font-extrabold text-white shadow-xl hover:bg-emerald-700 transition-all hover:scale-102 cursor-pointer border-none"
+                >
+                  <span>Taxpayer Access</span>
+                  <ArrowRight className="ml-2 h-4 w-4 text-white" />
+                </button>
+              )}
               <button
                 onClick={onOpenLogin}
-                className="rounded-xl border border-white/20 bg-white/5 px-6 py-3.5 text-sm font-semibold text-white backdrop-blur-md shadow-md transition-all hover:bg-white/10"
+                className="rounded-xl border border-white/20 bg-white/5 px-6 py-3.5 text-sm font-semibold text-white backdrop-blur-md shadow-md transition-all hover:bg-white/10 cursor-pointer"
               >
-                Staff & Taxpayer Access
+                {currentUser ? `Go to Console (${currentUser.name})` : 'Portal Login (Staff)'}
               </button>
             </div>
 

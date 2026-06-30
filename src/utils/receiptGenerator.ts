@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
-import QRCode from 'qrcode';
+import * as QRCodeLib from 'qrcode';
+const QRCode = (QRCodeLib as any).default || QRCodeLib;
 import { Invoice, Property } from '../types';
 
 /**
@@ -256,7 +257,9 @@ export async function exportOfficialReceiptPDF(
     doc.text("Annual Rental Value (ARV) Assessment", 23, 159.5);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(100, 116, 139);
-    doc.text("Building Type: " + property.propertyType + " (" + property.units + " Units Assessed • " + property.occupancyStatus + ")", 23, 163.5);
+    let subtitle1 = "Building Type: " + property.propertyType + " (" + property.units + " Units Assessed • " + property.occupancyStatus + ")";
+    if (subtitle1.length > 55) subtitle1 = subtitle1.substring(0, 52) + "...";
+    doc.text(subtitle1, 23, 163.5);
     doc.setTextColor(15, 23, 42);
     doc.setFont("helvetica", "bold");
     doc.text("Assigned Value", 115, 159.5, { align: "right" });
@@ -271,7 +274,9 @@ export async function exportOfficialReceiptPDF(
     doc.text(`Statutory Tenement Rate Levy (${property.ratePercentage}%)`, 23, 171.5);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(100, 116, 139);
-    doc.text("Formulated rate percentage applied to assessed rental value under Code Cap 13", 23, 175.5);
+    let subtitle2 = "Formulated multiplier percentage applied to assessed rental value under Code Cap 13";
+    if (subtitle2.length > 55) subtitle2 = subtitle2.substring(0, 52) + "...";
+    doc.text(subtitle2, 23, 175.5);
     doc.setTextColor(15, 23, 42);
     doc.setFont("helvetica", "bold");
     doc.text(`${property.ratePercentage}% of ARV`, 115, 171.5, { align: "right" });
@@ -288,7 +293,9 @@ export async function exportOfficialReceiptPDF(
       doc.text("Filing Arrears penalty charge", 23, 183.5);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(239, 68, 68);
-      doc.text("10% statutory compounding delinquency interest closed upon clearance collection", 23, 187.5);
+      let subtitle3 = "10% statutory compounding delinquency interest closed upon clearance collection";
+      if (subtitle3.length > 55) subtitle3 = subtitle3.substring(0, 52) + "...";
+      doc.text(subtitle3, 23, 187.5);
       doc.setFont("helvetica", "bold");
       doc.text("10% Penalty", 115, 183.5, { align: "right" });
       doc.text("—", 145, 183.5, { align: "right" });
@@ -297,7 +304,9 @@ export async function exportOfficialReceiptPDF(
       doc.text("Filing Arrears penalty charge", 23, 183.5);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(100, 116, 139);
-      doc.text("10% statutory compounding delinquency closed successfully", 23, 187.5);
+      let subtitle3 = "10% statutory compounding delinquency closed successfully done";
+      if (subtitle3.length > 55) subtitle3 = subtitle3.substring(0, 52) + "...";
+      doc.text(subtitle3, 23, 187.5);
       doc.setFont("helvetica", "bold");
       doc.text("0.00% Zero Arrears", 115, 183.5, { align: "right" });
       doc.text("—", 145, 183.5, { align: "right" });

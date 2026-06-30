@@ -1,0 +1,160 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global safety block: Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 1. Primitive Definitions & reusable global helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Auth checks mapped to roles
+    function isSuperAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Super Admin';
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Super Admin', 'LGA Admin'];
+    }
+
+    function isStaff() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Super Admin', 'LGA Admin', 'Tax Officer', 'Accountant', 'Field Agent'];
+    }
+
+    // 2. Entity Validator Helpers
+    function isValidUser(data) {
+      return data.keys().hasAll(['name', 'email', 'role']) 
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 100
+        && data.role is string && data.role in ['Super Admin', 'LGA Admin', 'Tax Officer', 'Field Agent', 'Accountant', 'Taxpayer'];
+    }
+
+    function isValidOwner(owner) {
+      return owner.fullName is string && owner.fullName.size() > 0 && owner.fullName.size() <= 150
+        && owner.phoneNumber is string && owner.phoneNumber.size() > 0 && owner.phoneNumber.size() <= 30
+        && owner.ninOrTin is string && owner.ninOrTin.size() > 0 && owner.ninOrTin.size() <= 50;
+    }
+
+    function isValidProperty(data) {
+      return data.keys().hasAll(['owner', 'propertyAddress', 'zoneCode', 'annualRateValue'])
+        && isValidOwner(data.owner)
+        && data.propertyAddress is string && data.propertyAddress.size() > 0 && data.propertyAddress.size() <= 300
+        && data.zoneCode is string && data.zoneCode.size() > 0 && data.zoneCode.size() <= 20
+        && (data.annualRateValue is float || data.annualRateValue is int) && data.annualRateValue >= 0;
+    }
+
+    function isValidInspector(data) {
+      return data.keys().hasAll(['staffName', 'staffId', 'assignedZone'])
+        && data.staffName is string && data.staffName.size() > 0 && data.staffName.size() <= 150
+        && data.staffId is string && data.staffId.size() > 0 && data.staffId.size() <= 50
+        && data.assignedZone is string && data.assignedZone.size() > 0 && data.assignedZone.size() <= 50;
+    }
+
+    function isValidAssessment(data) {
+      return data.keys().hasAll(['property', 'fiscalYear', 'amountDue', 'dueDate'])
+        && isValidProperty(data.property)
+        && data.fiscalYear is int && data.fiscalYear >= 2000 && data.fiscalYear <= 2100
+        && (data.amountDue is float || data.amountDue is int) && data.amountDue >= 0
+        && data.dueDate is string;
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['assessment', 'amountPaid', 'paymentDate', 'paymentReference'])
+        && isValidAssessment(data.assessment)
+        && (data.amountPaid is float || data.amountPaid is int) && data.amountPaid >= 0
+        && data.paymentDate is string
+        && data.paymentReference is string && data.paymentReference.size() > 0 && data.paymentReference.size() <= 100;
+    }
+
+    // 3. Collection Rules Setup
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isStaff());
+      allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin()) && isValidUser(incoming());
+      allow update: if isSignedIn() && (
+        (request.auth.uid == userId && incoming().role == existing().role && isValidUser(incoming())) ||
+        (isAdmin() && isValidUser(incoming()))
+      );
+      allow delete: if isAdmin();
+
+      match /properties/{propertyId} {
+        allow read: if isSignedIn() && (request.auth.uid == userId || isStaff());
+        allow create, update: if isSignedIn() && (request.auth.uid == userId || isStaff()) && isValidProperty(incoming());
+        allow delete: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      }
+    }
+
+    match /properties/{propertyId} {
+      allow read: if isSignedIn();
+      allow create, update: if isStaff() && isValidProperty(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /inspectors/{inspectorId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() && isValidInspector(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /assessments/{assessmentId} {
+      allow read: if isSignedIn();
+      allow create, update: if isStaff() && isValidAssessment(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /payments/{paymentId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidPayment(incoming());
+      allow update: if isStaff() && isValidPayment(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Backwards Compatibility / UI logging collections
+    match /activityLogs/{logId} {
+      allow read: if isStaff();
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isStaff();
+      allow create: if true; // Since logs are written by both signed in and anonymous clients
+      allow update, delete: if false; // Audit logs should be immutable
+    }
+
+    match /enforcement/{actionId} {
+      allow read: if isSignedIn();
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if isSignedIn();
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}

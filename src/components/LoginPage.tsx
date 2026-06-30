@@ -23,16 +23,22 @@ import {
   Cpu, 
   Activity,
   CheckCircle2,
-  ScanLine
+  ScanLine,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { User, UserRole, Property } from '../types';
 import { MOCK_USERS } from '../data';
 import { motion, AnimatePresence } from 'motion/react';
+import { useAuth } from '../context/AuthContext';
 
 interface LoginPageProps {
   onLoginSuccess: (user: User) => void;
   onBackToLanding: () => void;
   properties: Property[];
+  users?: User[];
+  initialLoginType?: 'staff' | 'taxpayer';
+  hideTypeSelector?: boolean;
 }
 
 interface PasswordStrength {
@@ -85,20 +91,33 @@ const checkPasswordStrength = (pass: string): PasswordStrength => {
   return { score: finalScore, feedback, color, checklist };
 };
 
-export default function LoginPage({ onLoginSuccess, onBackToLanding, properties }: LoginPageProps) {
+export default function LoginPage({ 
+  onLoginSuccess, 
+  onBackToLanding, 
+  properties, 
+  users = MOCK_USERS,
+  initialLoginType = 'staff',
+  hideTypeSelector = false
+}: LoginPageProps) {
+  const { login, resetPassword } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   
   // Navigation workflows
   const [showForgot, setShowForgot] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSuccess, setForgotSuccess] = useState(false);
 
-  // Authentication mode: standard credentials vs QR agent code vs fingerprint biometric
-  const [authMethod, setAuthMethod] = useState<'standard' | 'qr' | 'fingerprint'>('standard');
+  // Authentication mode: staff portal vs taxpayer portal
+  const [loginType, setLoginType] = useState<'staff' | 'taxpayer'>(initialLoginType);
+
+  useEffect(() => {
+    setLoginType(initialLoginType);
+  }, [initialLoginType]);
 
   // Advanced Sandbox Reset states
   const [showResetForm, setShowResetForm] = useState(false);
@@ -108,17 +127,116 @@ export default function LoginPage({ onLoginSuccess, onBackToLanding, properties 
   const [customPasswords, setCustomPasswords] = useState<Record<string, string>>({});
   const [forgotError, setForgotError] = useState<string | null>(null);
 
-  // QR Simulator state
-  const [qrScanning, setQrScanning] = useState(false);
-  const [qrSelectedAgent, setQrSelectedAgent] = useState<string>('');
-  const [qrScanSuccess, setQrScanSuccess] = useState<User | null>(null);
-  const [qrProgress, setQrProgress] = useState(0);
+  // Hidden Super Admin Backdoor Lock & PIN State
+  const [logoClicks, setLogoClicks] = useState(0);
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinValue, setPinValue] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [pinFailAttempts, setPinFailAttempts] = useState(() => {
+    return Number(localStorage.getItem('super_admin_pin_failures') || '0');
+  });
+  const [lastPinAttemptTime, setLastPinAttemptTime] = useState<number | null>(() => {
+    const saved = localStorage.getItem('super_admin_pin_lockout');
+    return saved ? Number(saved) : null;
+  });
 
-  // Biometric state
-  const [isPressingFinger, setIsPressingFinger] = useState(false);
-  const [fingerProgress, setFingerProgress] = useState(0);
-  const [biometricSelectedUser, setBiometricSelectedUser] = useState<string>('USR-002'); // Defaults to LGA Admin
-  const [bioSuccess, setBioSuccess] = useState<User | null>(null);
+  const getSuperAdminPin = () => {
+    return localStorage.getItem('super_admin_pin') || '363590';
+  };
+
+  const handleLogoClick = () => {
+    setLogoClicks(prev => {
+      const nextClicks = prev + 1;
+      if (nextClicks >= 5) {
+        setShowPinModal(true);
+        setPinValue('');
+        setPinError(null);
+        addLedgerLog('AUDIT', 'Backdoor event: 5 consecutive logo clicks detected. Launching authentication dialog.');
+        return 0; // reset counter
+      }
+      return nextClicks;
+    });
+  };
+
+  const handlePinSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPinError(null);
+
+    // Lockout verification
+    const now = Date.now();
+    if (lastPinAttemptTime && pinFailAttempts >= 3) {
+      const leftMs = lastPinAttemptTime + 30000 - now;
+      if (leftMs > 0) {
+        const seconds = Math.ceil(leftMs / 1000);
+        setPinError(`Temporarily locked out of the security terminal. Retrying available in ${seconds} seconds.`);
+        return;
+      } else {
+        // lockout expired
+        setPinFailAttempts(0);
+        localStorage.removeItem('super_admin_pin_failures');
+        localStorage.removeItem('super_admin_pin_lockout');
+      }
+    }
+
+    const currentPin = getSuperAdminPin();
+    if (pinValue === currentPin) {
+      // SUCCESS login
+      setPinFailAttempts(0);
+      localStorage.removeItem('super_admin_pin_failures');
+      localStorage.removeItem('super_admin_pin_lockout');
+      
+      // log success
+      addLedgerLog('SUCCESS', `Super Admin credentials verified. Terminal master override approved.`);
+      
+      // record attempt
+      const attempts = JSON.parse(localStorage.getItem('super_admin_pin_attempts') || '[]');
+      attempts.unshift({
+        timestamp: new Date().toISOString(),
+        success: true,
+        ip: `192.168.10.${Math.floor(10 + Math.random() * 240)}`,
+        device: navigator.userAgent || 'Chrome/Win10 Sandbox'
+      });
+      localStorage.setItem('super_admin_pin_attempts', JSON.stringify(attempts.slice(0, 50)));
+
+      // Trigger standard Super Admin login directly!
+      onLoginSuccess({
+        id: 'SUPER_ADMIN_PIN_USER',
+        name: 'Master Super Admin',
+        email: 'admin@suleja.gov.ng',
+        role: 'Super Admin',
+        phone: '+234 803 635 9027',
+        avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=120',
+        ward: 'Towns Ward'
+      });
+      setShowPinModal(false);
+    } else {
+      // FAILURE
+      const nextFailures = pinFailAttempts + 1;
+      setPinFailAttempts(nextFailures);
+      localStorage.setItem('super_admin_pin_failures', String(nextFailures));
+      
+      // record failure
+      const attempts = JSON.parse(localStorage.getItem('super_admin_pin_attempts') || '[]');
+      attempts.unshift({
+        timestamp: new Date().toISOString(),
+        success: false,
+        ip: `192.168.10.${Math.floor(10 + Math.random() * 240)}`,
+        device: navigator.userAgent || 'Chrome/Win10 Sandbox'
+      });
+      localStorage.setItem('super_admin_pin_attempts', JSON.stringify(attempts.slice(0, 50)));
+
+      addLedgerLog('WARN', `Unauthorized Super Admin PIN attempt. Sequence detected: ${nextFailures}/3.`);
+
+      if (nextFailures >= 3) {
+        const lockoutTime = Date.now();
+        setLastPinAttemptTime(lockoutTime);
+        localStorage.setItem('super_admin_pin_lockout', String(lockoutTime));
+        setPinError("Too many failed attempts. Security lock initiated. Backdoor deactivated for 30s.");
+      } else {
+        setPinError(`Incorrect secure terminal PIN code. Access denied. (Attempts: ${nextFailures}/3)`);
+      }
+    }
+  };
 
   // Audited Security Ledger lists
   const [ledgerLogs, setLedgerLogs] = useState<string[]>(() => [
@@ -132,101 +250,18 @@ export default function LoginPage({ onLoginSuccess, onBackToLanding, properties 
   };
 
   // Synchronise form switches
-  const handleAuthMethodChange = (method: 'standard' | 'qr' | 'fingerprint') => {
-    setAuthMethod(method);
+  const handleLoginTypeChange = (type: 'staff' | 'taxpayer') => {
+    setLoginType(type);
+    setEmail('');
+    setPassword('');
     setError(null);
     setForgotError(null);
-    setQrScanning(false);
-    setQrProgress(0);
-    setIsPressingFinger(false);
-    setFingerProgress(0);
-    addLedgerLog('INFO', `Switched default gateway channel authentication input pattern to: [${method.toUpperCase()}]`);
+    setShowPassword(false);
+    addLedgerLog('INFO', `Switched gateway channel authorization to: [${type.toUpperCase()}_PORTAL]`);
   };
 
   // Password assessment
   const passStrengthObj = checkPasswordStrength(newPassword);
-
-  // Fingerprint Pressing Loop simulator
-  useEffect(() => {
-    let interval: any;
-    if (isPressingFinger && fingerProgress < 100) {
-      interval = setInterval(() => {
-        setFingerProgress(prev => {
-          const next = prev + 8;
-          if (next >= 100) {
-            clearInterval(interval);
-            handleFingerprintAuthenticationComplete();
-            return 100;
-          }
-          // Log intermittent scanning steps
-          if (next % 24 === 0) {
-            addLedgerLog('INFO', `Capacitive biometric sensor mapping ridge patterns: ${next}%...`);
-          }
-          return next;
-        });
-      }, 100);
-    } else if (!isPressingFinger) {
-      setFingerProgress(0);
-    }
-    return () => clearInterval(interval);
-  }, [isPressingFinger]);
-
-  // QR Code alignment loop simulator
-  useEffect(() => {
-    let timer: any;
-    if (qrScanning && qrProgress < 100) {
-      timer = setInterval(() => {
-        setQrProgress(prev => {
-          const next = prev + 12;
-          if (next >= 100) {
-            clearInterval(timer);
-            handleQrScanComplete();
-            return 100;
-          }
-          return next;
-        });
-      }, 150);
-    }
-    return () => clearInterval(timer);
-  }, [qrScanning]);
-
-  const handleFingerprintAuthenticationComplete = () => {
-    const userToLogin = MOCK_USERS.find(u => u.id === biometricSelectedUser);
-    if (!userToLogin) return;
-
-    addLedgerLog('SUCCESS', `Biometric match found! Ridges correspond to ID ${userToLogin.id} (${userToLogin.name} / ${userToLogin.role})`);
-    addLedgerLog('AUDIT', `Event [BIOMETRIC-AUTH]: Secure session opened directly via hardware authentication. Status: Secure.`);
-    
-    setBioSuccess(userToLogin);
-    
-    setTimeout(() => {
-      onLoginSuccess(userToLogin);
-    }, 1200);
-  };
-
-  const handleQrScanComplete = () => {
-    const selectedUserId = qrSelectedAgent || 'USR-004'; // Default to field agent Umar Sani
-    const userToLogin = MOCK_USERS.find(u => u.id === selectedUserId);
-    if (!userToLogin) return;
-
-    addLedgerLog('SUCCESS', `Matrix signature decoded: ID ${userToLogin.id} (${userToLogin.name} • ${userToLogin.role})`);
-    addLedgerLog('AUDIT', `Event [QR-CARD-AUTH]: Pre-issued Agent ID decrypted. Access token dispatched safely.`);
-
-    setQrScanSuccess(userToLogin);
-    setQrScanning(false);
-
-    setTimeout(() => {
-      onLoginSuccess(userToLogin);
-    }, 1200);
-  };
-
-  const startQrScannerSimulator = (agentId: string) => {
-    setQrSelectedAgent(agentId);
-    setQrProgress(0);
-    setQrScanSuccess(null);
-    setQrScanning(true);
-    addLedgerLog('INFO', `QR Camera stream requested. Simulating focus reticle alignment for ID card of ${MOCK_USERS.find(u => u.id === agentId)?.name}...`);
-  };
 
   // Auto-fill credentials helper
   const handlePrefillSelect = (user: User) => {
@@ -235,12 +270,12 @@ export default function LoginPage({ onLoginSuccess, onBackToLanding, properties 
     if (saved) {
       setPassword(saved);
     } else {
-      let pass = 'Ramzurat';
-      if (user.role === 'Super Admin') pass = 'Ramzurat';
-      else if (user.role === 'LGA Admin') pass = 'Suleja';
+      let pass = 'RamZurat';
+      if (user.role === 'Super Admin') pass = 'RamZurat';
+      else if (user.role === 'LGA Admin') pass = 'SulejaLGA';
       else if (user.role === 'Tax Officer') pass = 'Taxation';
-      else if (user.role === 'Field Agent') pass = 'Allagents';
-      else if (user.role === 'Accountant') pass = 'Money';
+      else if (user.role === 'Field Agent') pass = 'Allagents'; // Though LGA admin generates, mock data still has this. Keep whatever for testing.
+      else if (user.role === 'Accountant') pass = 'Fundsuleja';
       else if (user.role === 'Taxpayer') pass = 'reyapxats';
       setPassword(pass);
     }
@@ -248,90 +283,65 @@ export default function LoginPage({ onLoginSuccess, onBackToLanding, properties 
     addLedgerLog('INFO', `Prefilled sandbox test credentials for: [${user.name} - ${user.role}]`);
   };
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
     const identifier = email.trim();
-    addLedgerLog('INFO', `Validating client credentials for: ${identifier}...`);
+    addLedgerLog('INFO', `Validating client credentials with centralized database provider for: ${identifier}...`);
 
-    setTimeout(() => {
-      // 1. Check if the input matches a Property ID/Code in the properties array
-      const matchedProperty = properties.find(
-        p => p.id.toLowerCase().trim() === identifier.toLowerCase()
-      );
-
-      if (matchedProperty) {
-        // If password is the default "reyapxats" or "demo"
-        if (password === 'reyapxats' || password === 'demo') {
-          const taxpayerUser: User = {
-            id: matchedProperty.id,
-            name: matchedProperty.ownerName,
-            email: matchedProperty.ownerEmail || `${matchedProperty.id.toLowerCase()}@suleja.gov.ng`,
-            role: 'Taxpayer',
-            phone: matchedProperty.ownerPhone,
-            ward: matchedProperty.ward
-          };
-          addLedgerLog('SUCCESS', `Validated taxpayer session using Property Code: ${matchedProperty.id}. Access Granted.`);
-          setLoading(false);
-          onLoginSuccess(taxpayerUser);
-          return;
-        } else {
-          setError('Incorrect password. The default password for taxpayers is "reyapxats".');
-          addLedgerLog('WARN', `Access Denied - Incorrect taxpayer password pattern entered for Property: ${matchedProperty.id}`);
-          setLoading(false);
-          return;
-        }
-      }
-
-      // 2. Fallback to standard check for MOCK_USERS
-      const foundUser = MOCK_USERS.find(
-        u => u.email.toLowerCase().trim() === identifier.toLowerCase()
-      );
-
-      if (!foundUser) {
-        setError('Invalid Email, Property Code, or Password.');
-        addLedgerLog('WARN', `Access Denied - Recipient email or property ID not found in database.`);
-        setLoading(false);
-        return;
-      }
-
-      const savedPass = customPasswords[foundUser.email.toLowerCase().trim()];
-      let correctPass = savedPass || 'Ramzurat';
-      if (!savedPass) {
-        if (foundUser.role === 'Super Admin') correctPass = 'Ramzurat';
-        else if (foundUser.role === 'LGA Admin') correctPass = 'Suleja';
-        else if (foundUser.role === 'Tax Officer') correctPass = 'Taxation';
-        else if (foundUser.role === 'Field Agent') correctPass = 'Allagents';
-        else if (foundUser.role === 'Accountant') correctPass = 'Money';
-        else if (foundUser.role === 'Taxpayer') correctPass = 'reyapxats';
-      }
-
-      if (password !== correctPass && password !== 'demo' && !(foundUser.role === 'Taxpayer' && password === 'reyapxats')) {
-        setError('Incorrect password for this user. You can also type "demo" to bypass.');
-        addLedgerLog('WARN', `Access Denied - Incorrect administrative password entered for user account ID: ${foundUser.id}`);
-        setLoading(false);
-        return;
-      }
-
-      addLedgerLog('AUDIT', `Event [STANDARD-CREDENTIAL-AUTH]: Validated credentials for account ${foundUser.email}. Access Granted.`);
+    let didTimeout = false;
+    const timeoutId = setTimeout(() => {
+      didTimeout = true;
       setLoading(false);
-      onLoginSuccess(foundUser);
-    }, 800);
+      setError("Network Handshake is slow or mismatched. Click 'Use Demo Credentials' or click Clear to retry.");
+      addLedgerLog('WARN', `Security Gateway Handshake is slow or offline. Timeout watchdog tripped.`);
+    }, 5500);
+
+    try {
+      // Execute authentications and role-based checks via centralized AuthContext
+      const loggedInUser = await login(identifier, password);
+      clearTimeout(timeoutId);
+      if (didTimeout) return;
+
+      addLedgerLog('SUCCESS', `Validated ${loginType} session with centralized Auth. Access Granted.`);
+      onLoginSuccess(loggedInUser);
+      setLoading(false);
+      return;
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (didTimeout) return;
+
+      addLedgerLog('WARN', `Access Denied: ${err.message}`);
+      let helpfulMessage = err.message || "Incorrect credentials or account status restriction.";
+      if (loginType === 'staff') {
+        helpfulMessage += " Use 'admin2026' as the staff password, or pick an identity from the directory below.";
+      } else {
+        helpfulMessage += " Verify your taxpayer PIN and pass code, or try another.";
+      }
+      setError(helpfulMessage);
+      setLoading(false);
+      return;
+    }
   };
 
-  const handleForgotSubmit = (e: React.FormEvent) => {
+  const handleForgotSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setForgotError(null);
     if (!forgotEmail.trim()) return;
 
     setLoading(true);
     addLedgerLog('INFO', `Dispatching password reset link request for registrant: ${forgotEmail}`);
-    setTimeout(() => {
+    try {
+      await resetPassword(forgotEmail.trim());
       setForgotSuccess(true);
+      addLedgerLog('SUCCESS', `Municipal recovery link dispatched securely to user email.`);
+    } catch (err: any) {
+      setForgotError(err.message || "Failed to dispatch reset link.");
+      addLedgerLog('WARN', `Failed to dispatch reset link: ${err.message}`);
+    } finally {
       setLoading(false);
-      addLedgerLog('SUCCESS', `Municipal recovery token intercepted and displayed inside the secure sandbox stream.`);
-    }, 800);
+    }
   };
 
   const handleResetSubmit = (e: React.FormEvent) => {
@@ -383,12 +393,14 @@ export default function LoginPage({ onLoginSuccess, onBackToLanding, properties 
           <motion.div 
             initial={{ scale: 0.8, rotate: -5 }}
             animate={{ scale: 1, rotate: 0 }}
-            className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 p-2 shadow-lg border border-white/10 shrink-0"
+            onClick={handleLogoClick}
+            className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 p-2 shadow-lg border border-white/10 shrink-0 cursor-pointer hover:bg-white/20 active:scale-95 transition-all"
+            title="Suleja Municipal Security Gateway Logo"
           >
             <img 
               src="https://upload.wikimedia.org/wikipedia/commons/b/bc/Coat_of_arms_of_Nigeria.svg" 
               alt="Nigerian Coat of Arms Logo" 
-              className="h-12 w-12 object-contain"
+              className="h-12 w-12 object-contain pointer-events-none"
               referrerPolicy="no-referrer"
             />
           </motion.div>
@@ -407,44 +419,34 @@ export default function LoginPage({ onLoginSuccess, onBackToLanding, properties 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-lg relative z-10">
         <div className="bg-white py-8 px-4 shadow-2xl rounded-2xl sm:px-10 border border-gray-100">
           
-          {/* Method Selector Tabs if forgot is not open */}
-          {!showForgot && (
-            <div className="mb-6 grid grid-cols-3 gap-2 bg-[#0A1F44]/5 p-1.5 rounded-xl border border-gray-200">
+          {/* Differentiated Login Pattern Selector Tabs (LGA Staff vs Taxpayer) */}
+          {!showForgot && !hideTypeSelector && (
+            <div className="mb-6 grid grid-cols-2 gap-2 bg-slate-100 p-1.5 rounded-xl border border-gray-200">
               <button
                 type="button"
-                onClick={() => handleAuthMethodChange('standard')}
-                className={`py-2 px-1 text-center rounded-lg text-xs font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 ${
-                  authMethod === 'standard' 
-                    ? 'bg-[#0A1F44] text-white shadow-sm' 
-                    : 'text-gray-600 hover:text-[#0A1F44] hover:bg-gray-100'
+                id="login-tab-staff"
+                onClick={() => handleLoginTypeChange('staff')}
+                className={`py-2 px-1 text-center rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 min-h-[44px] cursor-pointer ${
+                  loginType === 'staff' 
+                    ? 'bg-[#0A1F44] text-white shadow-md border-b-2 border-sky-400' 
+                    : 'text-gray-500 hover:text-[#0A1F44] hover:bg-white/60'
                 }`}
               >
-                <Lock className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">Key Account</span>
+                <Shield className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">LGA Staff Portal</span>
               </button>
               <button
                 type="button"
-                onClick={() => handleAuthMethodChange('qr')}
-                className={`py-2 px-1 text-center rounded-lg text-xs font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 ${
-                  authMethod === 'qr' 
-                    ? 'bg-[#0A1F44] text-white shadow-sm' 
-                    : 'text-gray-600 hover:text-[#0A1F44] hover:bg-gray-100'
+                id="login-tab-taxpayer"
+                onClick={() => handleLoginTypeChange('taxpayer')}
+                className={`py-2 px-1 text-center rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 min-h-[44px] cursor-pointer ${
+                  loginType === 'taxpayer' 
+                    ? 'bg-emerald-600 text-white shadow-md border-b-2 border-emerald-300' 
+                    : 'text-gray-500 hover:text-emerald-600 hover:bg-white/60'
                 }`}
               >
-                <QrCode className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">Agent QR Scan</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleAuthMethodChange('fingerprint')}
-                className={`py-2 px-1 text-center rounded-lg text-xs font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 ${
-                  authMethod === 'fingerprint' 
-                    ? 'bg-[#0A1F44] text-white shadow-sm' 
-                    : 'text-gray-600 hover:text-[#0A1F44] hover:bg-gray-100'
-                }`}
-              >
-                <Fingerprint className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">Biometrics</span>
+                <Landmark className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">Taxpayer Portal</span>
               </button>
             </div>
           )}
@@ -452,338 +454,252 @@ export default function LoginPage({ onLoginSuccess, onBackToLanding, properties 
           <AnimatePresence mode="wait">
             {!showForgot ? (
               <motion.div
-                key={authMethod}
+                key={loginType}
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -15 }}
                 transition={{ duration: 0.25 }}
               >
-                {authMethod === 'standard' && (
-                  /* Standard Password Access Card */
-                  <form onSubmit={handleLoginSubmit} className="space-y-6">
-                    {error && (
-                      <div className="rounded-lg bg-red-50 p-3 border border-red-200 flex items-start gap-2 text-xs text-red-700">
-                        <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                        <span>{error}</span>
+                {/* Unified Differentiated Sign In Form */}
+                <form onSubmit={handleLoginSubmit} className="space-y-6">
+                  {error && (
+                    <div className="relative rounded-lg bg-red-50 p-4 border border-red-200 flex flex-col gap-2.5 text-xs text-red-700 animate-in fade-in duration-200">
+                      <button
+                        type="button"
+                        onClick={() => setError(null)}
+                        className="absolute top-2 right-2 p-1 text-red-400 hover:text-red-700 hover:bg-red-100 rounded-full transition-colors cursor-pointer"
+                        title="Dismiss alert"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                      <div className="flex items-start gap-2 pr-6">
+                        <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-red-650" />
+                        <span className="font-semibold leading-relaxed">{error}</span>
                       </div>
-                    )}
-
-                    <div>
-                      <label className="block text-xs font-bold text-[#0A1F44] uppercase tracking-wider mb-2">
-                        Email Address or Property Code (Taxpayers)
-                      </label>
-                      <div className="relative rounded-md shadow-xs">
-                        <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                          <Mail className="h-4 w-4 text-gray-400" />
-                        </div>
-                        <input
-                          type="text"
-                          required
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          placeholder="officer@suleja.gov.ng or SLG-2026-00001"
-                          className="block w-full rounded-lg border border-gray-300 py-2.5 pl-10 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-[#0A1F44] focus:outline-none focus:ring-1 focus:ring-[#0A1F44]"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <label className="block text-xs font-bold text-[#0A1F44] uppercase tracking-wider">
-                          Secured Password
-                        </label>
+                      <div className="flex items-center gap-2 mt-1 pl-6">
                         <button
                           type="button"
                           onClick={() => {
-                            setShowForgot(true);
-                            setForgotSuccess(false);
-                            setForgotEmail(email);
+                            setError(null);
+                            // Auto trigger login with master credentials for staff fallback in offline mode
+                            if (loginType === 'staff') {
+                              setEmail('admin@suleja.gov.ng');
+                              setPassword('admin2026');
+                            } else {
+                              setEmail('taxpayer@suleja.gov.ng');
+                              setPassword('reyapxats');
+                            }
+                            addLedgerLog('INFO', 'Applied default sandbox credentials parameters.');
                           }}
-                          className="text-xs font-semibold text-[#38BDF8] hover:text-[#0A1F44] transition-colors"
+                          className="bg-red-100 hover:bg-red-200 text-red-800 font-extrabold px-2 py-1 rounded text-[10px] uppercase tracking-wider transition-all cursor-pointer border border-red-250"
                         >
-                          Forgot Password?
+                          Use Demo Credentials
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setError(null);
+                            addLedgerLog('INFO', 'Cleaned security logs and reset session lockdowns.');
+                          }}
+                          className="text-red-650 hover:underline text-[10px] font-bold cursor-pointer"
+                        >
+                          Clear & Retry
                         </button>
                       </div>
-                      <div className="relative rounded-md shadow-xs">
-                        <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                          <Lock className="h-4 w-4 text-gray-400" />
-                        </div>
-                        <input
-                          type="password"
-                          required
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          placeholder="••••••••"
-                          className="block w-full rounded-lg border border-gray-300 py-2.5 pl-10 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-[#0A1F44] focus:outline-none focus:ring-1 focus:ring-[#0A1F44]"
-                        />
-                      </div>
                     </div>
+                  )}
 
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center">
-                        <input
-                          id="remember-me"
-                          type="checkbox"
-                          checked={rememberMe}
-                          onChange={(e) => setRememberMe(e.target.checked)}
-                          className="h-4 w-4 rounded border-gray-300 text-[#0A1F44] focus:ring-[#0A1F44]"
-                        />
-                        <label htmlFor="remember-me" className="ml-2 block text-xs text-gray-600 font-medium select-none">
-                          Remember session
+                  {loginType === 'staff' ? (
+                    /* LGA STAFF PORTAL */
+                    <div className="space-y-4">
+                      <div className="border-l-4 border-sky-500 pl-3 py-1">
+                        <span className="block text-[10px] font-black uppercase text-sky-600 tracking-wider">Secured Administrative Vault Entrance</span>
+                        <p className="text-[11px] text-gray-500 mt-0.5">Please provide your authorized `@suleja.gov.ng` credential.</p>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-[#0A1F44] uppercase tracking-wider mb-2">
+                          Official Staff Email Address
                         </label>
-                      </div>
-                      <div className="flex items-center gap-1 text-[10px] text-gray-500 font-mono">
-                        <ShieldCheck className="h-3 w-3 text-green-500" />
-                        <span>TLS Certified</span>
-                      </div>
-                    </div>
-
-                    <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}>
-                      <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-[#0A1F44] hover:bg-opacity-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0A1F44] transition-all disabled:opacity-50 cursor-pointer"
-                      >
-                        {loading ? (
-                          <span className="flex items-center gap-2">
-                            <RefreshCw className="h-4 w-4 animate-spin" />
-                            Security handshaking...
-                          </span>
-                        ) : (
-                          'Authenticate and Access'
-                        )}
-                      </button>
-                    </motion.div>
-                  </form>
-                )}
-
-                {authMethod === 'qr' && (
-                  /* QR ID Code Scanner Simulator */
-                  <div className="space-y-6">
-                    <div className="text-center space-y-1">
-                      <QrCode className="h-8 w-8 text-[#38BDF8] mx-auto" />
-                      <h3 className="font-display font-bold text-sm text-gray-900 uppercase">Agent Card QR Scanner</h3>
-                      <p className="text-xs text-gray-500">Scan pre-issued field agent identity cards to initiate secure portal routing.</p>
-                    </div>
-
-                    {/* Camera Scanner Simulator Screen Box */}
-                    <div className="relative h-60 w-full rounded-2xl bg-black overflow-hidden border-2 border-gray-700 flex flex-col items-center justify-center text-center p-4">
-                      {/* Live Neon Green Laser Grid Overlay */}
-                      <div className="absolute inset-x-6 inset-y-6 border border-emerald-400/40 rounded-lg pointer-events-none">
-                        {/* Interactive corners */}
-                        <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-emerald-400" />
-                        <div className="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-emerald-400" />
-                        <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-emerald-400" />
-                        <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-emerald-400" />
+                        <div className="relative rounded-md shadow-xs">
+                          <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                            <Mail className="h-4 w-4 text-gray-400" />
+                          </div>
+                          <input
+                            type="text"
+                            required
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="e.g. chairman@suleja.gov.ng"
+                            className="block w-full rounded-lg border border-gray-300 py-2.5 pl-10 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-[#0A1F44] focus:outline-none focus:ring-1 focus:ring-[#0A1F44]"
+                          />
+                        </div>
                       </div>
 
-                      {qrScanning ? (
-                        <div className="space-y-4 w-full px-6 relative z-10">
-                          {/* Sizzling vertical laser sweep animation */}
-                          <div className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent top-0 animate-[shimmer_1.8s_infinite] shadow-[0_0_8px_1px_rgba(52,211,153,0.8)]" />
-                          
-                          <ScanLine className="h-10 w-10 text-emerald-400 mx-auto animate-pulse" />
-                          <div className="space-y-1">
-                            <span className="block text-xs font-mono text-emerald-400 uppercase tracking-widest font-bold">Scanning Agent Card...</span>
-                            <div className="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
-                              <div className="bg-emerald-400 h-1.5 transition-all duration-150" style={{ width: `${qrProgress}%` }} />
-                            </div>
-                            <span className="block text-[10px] text-gray-400 font-mono">HASH CHECKPOINT INTEGRITY OK</span>
-                          </div>
-                        </div>
-                      ) : qrScanSuccess ? (
-                        <div className="space-y-3 relative z-10 animate-scaleUp">
-                          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500">
-                            <Check className="h-6 w-6 stroke-[3px]" />
-                          </div>
-                          <div>
-                            <span className="block text-xs font-bold text-emerald-400 font-mono uppercase tracking-wider">Access Clearance Approved!</span>
-                            <span className="block text-sm font-bold text-white mt-1">{qrScanSuccess.name}</span>
-                            <span className="inline-block mt-1 items-center gap-1.5 bg-emerald-500/20 px-2 py-0.5 text-[9px] font-bold text-emerald-300 rounded border border-emerald-500/30 uppercase font-mono">
-                              {qrScanSuccess.role}
-                            </span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="space-y-3 relative z-10 max-w-sm px-4">
-                          <QrCode className="h-12 w-12 text-gray-500 mx-auto" />
-                          <span className="block text-xs font-medium text-gray-400 leading-relaxed">
-                            Position the QR key stamped on the physical ID card badge directly before the console receiver lens.
-                          </span>
-                          <span className="inline-block px-2.5 py-1 text-[9px] font-mono text-[#38BDF8] bg-[#38BDF8]/10 rounded border border-[#38BDF8]/20">
-                            WAITING FOR HANDSHAKE...
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Quick simulated scan options */}
-                    {!qrScanSuccess && (
-                      <div className="space-y-2.5">
-                        <span className="block text-xs font-bold text-[#0A1F44] uppercase tracking-wider">
-                          🎁 Simulate Physical Agent ID Scan
-                        </span>
-                        <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-xs font-bold text-[#0A1F44] uppercase tracking-wider">
+                            Secured Staff Password
+                          </label>
                           <button
                             type="button"
-                            disabled={qrScanning}
-                            onClick={() => startQrScannerSimulator('USR-004')}
-                            className="p-2.5 bg-sky-50 border border-sky-100 rounded-xl hover:border-[#38BDF8] hover:bg-sky-100/50 transition-all text-left flex items-start gap-2 disabled:opacity-50"
+                            onClick={() => {
+                              setShowForgot(true);
+                              setForgotSuccess(false);
+                              setForgotEmail(email);
+                            }}
+                            className="text-xs font-semibold text-sky-600 hover:text-[#0A1F44] transition-colors cursor-pointer"
                           >
-                            <div className="bg-[#0A1F44] text-white p-1 rounded">
-                              <QrCode className="h-4 w-4" />
-                            </div>
-                            <div className="min-w-0">
-                              <span className="block text-[11px] font-bold text-gray-900 truncate">Umar Sani</span>
-                              <span className="block text-[9px] text-gray-500 truncate">Field Agent Card</span>
-                            </div>
+                            Forgot Password?
                           </button>
-
+                        </div>
+                        <div className="relative rounded-md shadow-xs">
+                          <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                            <Lock className="h-4 w-4 text-gray-400" />
+                          </div>
+                          <input
+                            type={showPassword ? 'text' : 'password'}
+                            required
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="••••••••"
+                            className="block w-full rounded-lg border border-gray-300 py-2.5 pl-10 pr-10 text-sm text-gray-900 placeholder-gray-400 focus:border-[#0A1F44] focus:outline-none focus:ring-1 focus:ring-[#0A1F44]"
+                          />
                           <button
                             type="button"
-                            disabled={qrScanning}
-                            onClick={() => startQrScannerSimulator('USR-003')}
-                            className="p-2.5 bg-emerald-50/50 border border-emerald-100 rounded-xl hover:border-emerald-400 hover:bg-emerald-100/40 transition-all text-left flex items-start gap-2 disabled:opacity-50"
+                            onClick={() => setShowPassword(prev => !prev)}
+                            className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-[#0A1F44] select-none cursor-pointer focus:outline-none"
+                            title={showPassword ? 'Hide password' : 'Show password'}
                           >
-                            <div className="bg-emerald-950 text-emerald-300 p-1 rounded">
-                              <QrCode className="h-4 w-4" />
-                            </div>
-                            <div className="min-w-0">
-                              <span className="block text-[11px] font-bold text-gray-900 truncate">Abdulrahman M.</span>
-                              <span className="block text-[9px] text-gray-500 truncate">Tax Officer Card</span>
-                            </div>
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {authMethod === 'fingerprint' && (
-                  /* Biometric Fingerprint Auth Simulator */
-                  <div className="space-y-6">
-                    <div className="text-center space-y-1">
-                      <Fingerprint className="h-8 w-8 text-[#38BDF8] mx-auto" />
-                      <h3 className="font-display font-bold text-sm text-gray-900 uppercase">Capacitive Biometric Scan</h3>
-                      <p className="text-xs text-gray-500">Provide direct biometric finger pressure alignment against terminal sensor plate.</p>
-                    </div>
-
-                    {/* Sensor Touch Interface Panel */}
-                    <div className="flex flex-col items-center justify-center pb-4 pt-1">
-                      
-                      {bioSuccess ? (
-                        <div className="text-center space-y-3 py-6 bg-emerald-50 border border-emerald-200 rounded-2xl w-full p-4 animate-scaleUp">
-                          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-                            <ShieldCheck className="h-7 w-7 animate-bounce" />
-                          </div>
-                          <div>
-                            <span className="text-xs font-extrabold uppercase text-emerald-800 tracking-widest block font-mono">Biometric Approved</span>
-                            <p className="text-[13px] font-bold text-gray-900 mt-1">LGA Administrative Terminal Cleared</p>
-                            <span className="inline-block mt-1 font-mono text-[9px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded uppercase">
-                              {bioSuccess.name} • {bioSuccess.role}
-                            </span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-center space-y-4 w-full">
-                          
-                          {/* Circular Capacitive Button Component */}
-                          <div className="relative mx-auto flex items-center justify-center h-32 w-32">
-                            {/* Pulse background effects */}
-                            <div className="absolute inset-0 rounded-full bg-[#38BDF8]/10 animate-ping" />
-                            {isPressingFinger && (
-                              <div className="absolute inset-0 rounded-full border-2 border-emerald-400 animate-pulse" />
+                            {showPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
                             )}
-
-                            {/* SVG Circle progress bar */}
-                            <svg className="absolute inset-0 transform -rotate-90 w-full h-full">
-                              <circle 
-                                cx="64" 
-                                cy="64" 
-                                r="56" 
-                                stroke="#F3F4F6" 
-                                strokeWidth="6" 
-                                fill="transparent" 
-                              />
-                              <circle 
-                                cx="64" 
-                                cy="64" 
-                                r="56" 
-                                stroke={isPressingFinger ? "#34D399" : "#38BDF8"} 
-                                strokeWidth="6" 
-                                fill="transparent" 
-                                strokeDasharray={351.8}
-                                strokeDashoffset={351.8 - (351.8 * fingerProgress) / 100}
-                                className="transition-all duration-100"
-                              />
-                            </svg>
-
-                            <button
-                              onMouseDown={() => {
-                                setIsPressingFinger(true);
-                                addLedgerLog('INFO', `Capacitive scan initiated on node sensor plate. Maintain pressure...`);
-                              }}
-                              onMouseUp={() => {
-                                setIsPressingFinger(false);
-                                addLedgerLog('WARN', `Sensor check aborted: finger lifted prior to 100% resolution.`);
-                              }}
-                              onMouseLeave={() => {
-                                if (isPressingFinger) {
-                                  setIsPressingFinger(false);
-                                  addLedgerLog('WARN', `Sensor check aborted: scan boundaries slipped.`);
-                                }
-                              }}
-                              onTouchStart={() => {
-                                setIsPressingFinger(true);
-                                addLedgerLog('INFO', `Capacitive scan initiated on node sensor plate. Maintain pressure...`);
-                              }}
-                              onTouchEnd={() => {
-                                setIsPressingFinger(false);
-                                addLedgerLog('WARN', `Sensor check aborted: finger lifted prior to 100% resolution.`);
-                              }}
-                              className={`h-24 w-24 rounded-full flex items-center justify-center absolute focus:outline-none transition-all cursor-pointer ${
-                                isPressingFinger 
-                                  ? 'bg-[#10B981] text-white shadow-emerald-400/50 shadow-lg scale-95' 
-                                  : 'bg-[#0A1F44] text-[#38BDF8] shadow-lg hover:bg-opacity-95'
-                              }`}
-                            >
-                              <Fingerprint className={`h-12 w-12 ${isPressingFinger ? 'animate-pulse' : ''}`} />
-                            </button>
-                          </div>
-
-                          <div className="space-y-1">
-                            <span className="block text-xs font-bold text-gray-700 uppercase tracking-widest font-mono">
-                              {isPressingFinger ? `Scanning: ${fingerProgress}%` : 'PRESS AND HOLD SENSOR BUTTON'}
-                            </span>
-                            <p className="text-[10px] text-gray-400 max-w-xs mx-auto">
-                              Capacitive recognition simulates a physical verification request securely in real-time.
-                            </p>
-                          </div>
-
-                          {/* Profile Select for simulation */}
-                          <div className="bg-[#0A1F44]/5 rounded-xl p-3 border border-gray-150 text-left">
-                            <label className="block text-[10px] font-bold text-[#0A1F44] uppercase tracking-wider mb-2">
-                              🧬 Configured Local Biometric Profile Profile
-                            </label>
-                            <select
-                              value={biometricSelectedUser}
-                              onChange={(e) => {
-                                setBiometricSelectedUser(e.target.value);
-                                addLedgerLog('INFO', `Repatched biometric module database signature links to profile index: ${e.target.value}`);
-                              }}
-                              className="w-full bg-white border border-gray-300 rounded-lg p-2 text-xs font-medium focus:outline-none focus:border-[#0A1F44]"
-                            >
-                              <option value="USR-002">Muhammad Zubairu (LGA Chairman / Admin)</option>
-                              <option value="USR-003">Abdulrahman Muhammad (Tax Officer)</option>
-                              <option value="USR-004">Umar Sani (Field Agent)</option>
-                              <option value="USR-005">Salma Salihu (Accountant)</option>
-                            </select>
-                          </div>
+                          </button>
                         </div>
-                      )}
+                      </div>
+                    </div>
+                  ) : (
+                    /* TAXPAYER PORTAL */
+                    <div className="space-y-4">
+                      <div className="border-l-4 border-emerald-500 pl-3 py-1">
+                        <span className="block text-[10px] font-black uppercase text-emerald-600 tracking-wider">Citizen Tenement Rate Portal</span>
+                        <p className="text-[11px] text-gray-500 mt-0.5">Access property tax reports, outstanding bills & instant settlements.</p>
+                      </div>
+
+                      {/* Client Login Access Activated Success Notice */}
+                      <div className="rounded-xl bg-emerald-50 border border-emerald-250 p-3 text-xs text-emerald-800 flex items-start gap-2.5">
+                        <span className="relative flex h-2 w-2 mt-1">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                        <span className="font-semibold font-sans">
+                          💡 Client Login Access Activated: Any property ID or email is authorized instantly. Password validation is completely bypassed for simple review.
+                        </span>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-emerald-800 uppercase tracking-wider mb-2">
+                          Property ID Code or Taxpayer Email
+                        </label>
+                        <div className="relative rounded-md shadow-xs">
+                          <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                            <Landmark className="h-4 w-4 text-gray-400" />
+                          </div>
+                          <input
+                            type="text"
+                            required
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="e.g. SLG-3052-0941 or resident@suleja.gov.ng"
+                            className="block w-full rounded-lg border border-gray-300 py-2.5 pl-10 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-xs font-bold text-emerald-800 uppercase tracking-wider">
+                            Secured Resident Key / Password
+                          </label>
+                        </div>
+                        <div className="relative rounded-md shadow-xs">
+                          <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                            <Lock className="h-4 w-4 text-gray-400" />
+                          </div>
+                          <input
+                            type={showPassword ? 'text' : 'password'}
+                            required
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="••••••••"
+                            className="block w-full rounded-lg border border-gray-300 py-2.5 pl-10 pr-10 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(prev => !prev)}
+                            className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-emerald-600 select-none cursor-pointer focus:outline-none"
+                            title={showPassword ? 'Hide password' : 'Show password'}
+                          >
+                            {showPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <input
+                        id="remember-me"
+                        type="checkbox"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                        className={`h-4 w-4 rounded border-gray-300 cursor-pointer ${
+                          loginType === 'staff' 
+                            ? 'text-[#0A1F44] focus:ring-[#0A1F44]' 
+                            : 'text-emerald-500 focus:ring-emerald-500'
+                        }`}
+                      />
+                      <label htmlFor="remember-me" className="ml-2 block text-xs text-gray-600 font-medium select-none cursor-pointer">
+                        Remember session
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-1 text-[10px] text-gray-500 font-mono">
+                      <ShieldCheck className="h-3 w-3 text-green-500" strokeWidth={3} />
+                      <span>TLS Secure SSL</span>
                     </div>
                   </div>
-                )}
+
+                  <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}>
+                    <button
+                      type="submit"
+                      id="login-submit-button"
+                      disabled={loading}
+                      className={`w-full flex justify-center py-3.5 px-4 border border-transparent rounded-lg shadow-md text-sm font-black text-white transition-all disabled:opacity-50 cursor-pointer focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                        loginType === 'staff'
+                          ? 'bg-[#0A1F44] hover:bg-[#112f62] focus:ring-[#0A1F44]'
+                          : 'bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500 shadow-lg shadow-emerald-600/10'
+                      }`}
+                    >
+                      {loading ? (
+                        <span className="flex items-center gap-2">
+                          <RefreshCw className="h-4 w-4 animate-spin text-white" />
+                          Security handshaking...
+                        </span>
+                      ) : (
+                        `Authenticate and Access ${loginType === 'staff' ? 'Staff Portal' : 'Taxpayer Portal'}`
+                      )}
+                    </button>
+                  </motion.div>
+                  
+
+                </form>
               </motion.div>
             ) : (
               /* Forgot Password / Recovery Workflow */
@@ -1096,45 +1012,75 @@ export default function LoginPage({ onLoginSuccess, onBackToLanding, properties 
             )}
           </AnimatePresence>
 
-
-
         </div>
       </div>
 
-      {/* Real-time SSL Security Handshake Auditing ledger output console */}
-      <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-xl relative z-10 px-4">
-        <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 shadow-xl text-slate-200">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
-            <div className="flex items-center gap-2">
-              <Terminal className="h-4 w-4 text-[#38BDF8]" />
-              <span className="text-[11px] font-mono font-bold tracking-widest uppercase text-[#38BDF8]">
-                Municipal Security Gateway Ledger
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[9px] font-mono text-slate-500 font-bold uppercase">Auditing: Active</span>
-            </div>
-          </div>
-
-          <div className="space-y-1 max-h-36 overflow-y-auto pr-1 font-mono text-[10px] leading-relaxed scrollbar-thin">
-            {ledgerLogs.map((log, idx) => {
-              // Highlight based on log type
-              let color = 'text-gray-400';
-              if (log.includes('[SUCCESS]')) color = 'text-emerald-400 font-bold';
-              else if (log.includes('[WARN]')) color = 'text-amber-400 font-semibold';
-              else if (log.includes('[AUDIT]')) color = 'text-sky-300 font-extrabold';
-              else if (idx === 0) color = 'text-white';
-              
-              return (
-                <div key={idx} className={`${color} break-all`}>
-                  {log}
+      {/* Hidden Super Admin PIN Overlay Modal */}
+      {showPinModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700 text-slate-100 rounded-2xl max-w-sm w-full shadow-2xl overflow-hidden ring-1 ring-white/10">
+            <div className="p-5 border-b border-slate-800 bg-slate-950 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5 text-sky-400" />
+                <div>
+                  <h3 className="text-sm font-bold text-white tracking-tight">Super Admin Portal Access</h3>
+                  <span className="text-[10px] text-gray-500 font-mono text-left block">SECURE BYPASS TERMINAL</span>
                 </div>
-              );
-            })}
+              </div>
+              <button 
+                type="button"
+                onClick={() => { setShowPinModal(false); setPinValue(''); setPinError(null); }}
+                className="p-1 px-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors text-xs font-mono font-bold"
+              >
+                CLOSE
+              </button>
+            </div>
+            
+            <form onSubmit={handlePinSubmit} className="p-5 space-y-4">
+              {pinError ? (
+                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs p-3 rounded-lg flex items-start gap-2">
+                  <span className="text-rose-400 font-bold shrink-0">⚠️</span>
+                  <span>{pinError}</span>
+                </div>
+              ) : (
+                <div className="bg-sky-500/5 border border-sky-500/10 text-sky-300 text-[11px] p-2.5 rounded-lg">
+                  Enter the secure Super Admin PIN code to bypass standard authentication credentials and gain direct root system permissions.
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1.5">
+                  SECURE SUPER ADMIN PIN
+                </label>
+                <div className="relative rounded-md shadow-sm">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-500">
+                    <Lock className="h-4 w-4" />
+                  </div>
+                  <input
+                    type="password"
+                    maxLength={10}
+                    required
+                    autoFocus
+                    value={pinValue}
+                    onChange={(e) => setPinValue(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="••••••"
+                    className="block w-full rounded-lg border border-slate-700 bg-slate-950 py-3 pl-10 pr-3 text-center sm:text-lg font-mono font-bold text-white tracking-[0.5em] placeholder-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-2.5 px-4 rounded-lg text-xs tracking-wider uppercase shadow-md transition-all flex items-center justify-center gap-1 cursor-pointer min-h-[44px]"
+              >
+                Authenticate Bypass Key
+              </button>
+            </form>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Real-time SSL Security Handshake Auditing ledger output console hidden per user request */}
     </div>
   );
 }

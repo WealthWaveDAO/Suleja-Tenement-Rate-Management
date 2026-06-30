@@ -20,6 +20,13 @@ export interface User {
   avatarUrl?: string;
   ward?: string;
   propertyId?: string;
+  password?: string;
+  suspended?: boolean;
+  locked?: boolean;
+  mfaEnabled?: boolean;
+  forcePasswordReset?: boolean;
+  lastLogin?: string;
+  failedAttempts?: number;
 }
 
 export type PropertyType = 'Residential' | 'Commercial' | 'Industrial';
@@ -31,6 +38,7 @@ export interface Property {
   ownerName: string;
   ownerPhone: string;
   ownerEmail?: string;
+  ninOrTin?: string;
   address: string;
   ward: string; // Suleja wards: Sabo Gari, Kurmin Sarki, Iku, Maje, Gauraka, Hashimi, Bakin Iku, Wambai, Towns Ward, Kaduna Road
   propertyType: PropertyType;
@@ -46,7 +54,10 @@ export interface Property {
   valuationDate: string;
   lastBilledDate: string;
   inspectorName?: string;
+  description?: string;
   attachments?: PropertyAttachment[];
+  taxpayerUsername?: string;
+  taxpayerPassword?: string;
 }
 
 export interface PropertyAttachment {
@@ -118,6 +129,7 @@ export interface SystemSettings {
   stateName: string; // Niger State
   penaltyRate: number; // Default 10% for overdue bills
   duePeriodDays: number; // Default 30 days
+  fiscalTarget?: number; // Fiscal year target in NGN
 }
 
 export interface Notification {
@@ -155,3 +167,62 @@ export interface AppBackup {
   sizeKb: number;
   type: 'automatic' | 'manual';
 }
+
+export interface SentSmsRecord {
+  id: string;
+  propertyId: string;
+  ownerName: string;
+  phone: string;
+  type: 'Reminder' | 'Demand';
+  message: string;
+  sentAt: string;
+  status: 'Delivered' | 'Pending' | 'Failed';
+  gatewayResponse: string;
+}
+
+// User-defined data schema mapping
+export interface Owner {
+  fullName: string;
+  phoneNumber: string;
+  ninOrTin: string;
+  email?: string;
+  alternateContact?: string;
+}
+
+export interface DbProperty {
+  id: string;
+  owner: Owner;
+  propertyAddress: string;
+  zoneCode: string;
+  annualRateValue: number;
+  geoCoordinates?: number[]; // Vector (size: 168)
+  lastInspectionDate?: string; // Timestamp
+  status?: string; // e.g., "Active", "Vacant", "Exempt"
+}
+
+export interface Inspector {
+  staffName: string;
+  staffId: string;
+  assignedZone: string;
+  phoneNumber?: string;
+}
+
+export interface Assessment {
+  id: string;
+  property: DbProperty;
+  fiscalYear: number;
+  amountDue: number;
+  dueDate: string; // Date
+  penaltyAmount?: number;
+}
+
+export interface DbPayment {
+  id: string;
+  assessment: Assessment;
+  amountPaid: number;
+  paymentDate: string; // Timestamp
+  paymentReference: string;
+  paymentMethod?: string; // e.g., "Bank", "POS", "Mobile"
+}
+
+

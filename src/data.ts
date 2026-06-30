@@ -82,13 +82,14 @@ export const SULEJA_WARDS = [
 ];
 
 export const DEFAULT_SETTINGS: SystemSettings = {
-  residentialRate: 2.0, // 2%
+  residentialRate: 4.0, // 4%
   commercialRate: 4.0, // 4%
-  industrialRate: 5.0, // 5%
+  industrialRate: 4.0, // 4%
   lgaName: 'Suleja Local Government Area',
   stateName: 'Niger State',
   penaltyRate: 10.0, // 10% formatting
-  duePeriodDays: 30
+  duePeriodDays: 30,
+  fiscalTarget: 150000000 // default NGN 150M targeting
 };
 
 // Simple pseudo-random generator to remain deterministic with Suleja data
@@ -129,7 +130,15 @@ export function generateSulejaDemoData(): {
     'Hassan Dallatu Road', 'Iku Road', 'Jubilee Road', 'Bida Road', 'Kaduna Road',
     'Abuja Road', 'Sarki Street', 'Dikko Close', 'Emir Palace Way', 'General Hospital Link',
     'Sabo Gari Market Road', 'Maje Bypass', 'Gauraka Crescent', 'Federal Housing Link',
-    'Bakin Iku Avenue', 'Zuma Rock View Drive', 'LGA Secretariat Road', 'Ahmadu Bello Way'
+    'Bakin Iku Avenue', 'Zuma Rock View Drive', 'LGA Secretariat Road', 'Ahmadu Bello Way',
+    'Minna Road', 'Field Base Road', 'Ogbomosho Street', 'Kano Road', 'Kutunbawa Street',
+    'Angwan Gwari Road', 'Gwarinpa Link Bypass', 'Gauraka Expressway', 'Emir Palace Road',
+    'Favour Land Close', 'Murtala Muhammed Way', 'Shehu Shagari Road', 'Obasanjo Street',
+    'Ibrahim Babangida Way', 'Morocco Road', 'Bakin Iku Bypass', 'Kwamba Road',
+    'Madalla Market Road', 'Chaza Link', 'Zuma Rock Crescent', 'Government Secondary School Road',
+    'Abuja-Lokoja Expressway Suleja Segment', 'Nnamdi Azikiwe Way', 'Zuma Barracks Crescent',
+    'Command Secondary School Link', 'Angwan Sabori Road', 'Lokoja Road', 'Pankshin Street',
+    'New Market Road', 'Zuma Rock Heritage Road', 'Pawpaw Street', 'Waterboard Road'
   ];
 
   const ownerPics = [
@@ -198,7 +207,7 @@ export function generateSulejaDemoData(): {
     }
 
     // Rate percentage
-    const ratePercentage = propertyType === 'Residential' ? 2.0 : propertyType === 'Commercial' ? 4.0 : 5.0;
+    const ratePercentage = 4.0;
     const tenementRate = annualRentalValue * (ratePercentage / 100);
 
     const occupancyStatuses: ('Occupied' | 'Vacant' | 'Owner Occupied')[] = ['Occupied', 'Vacant', 'Owner Occupied'];

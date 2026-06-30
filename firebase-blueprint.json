@@ -1,0 +1,108 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered app user, containing role and auth metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["Super Admin", "LGA Admin", "Tax Officer", "Field Agent", "Accountant", "Taxpayer"] }
+      },
+      "required": ["name", "email", "role"]
+    },
+    "Owner": {
+      "title": "Owner",
+      "description": "Property owner details.",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "ninOrTin": { "type": "string" },
+        "email": { "type": "string" },
+        "alternateContact": { "type": "string" }
+      },
+      "required": ["fullName", "phoneNumber", "ninOrTin"]
+    },
+    "Property": {
+      "title": "Property",
+      "description": "Property asset details.",
+      "type": "object",
+      "properties": {
+        "owner": { "$ref": "#/entities/Owner" },
+        "propertyAddress": { "type": "string" },
+        "zoneCode": { "type": "string" },
+        "annualRateValue": { "type": "number" },
+        "geoCoordinates": { "type": "array", "description": "Vector coordinates (168 dimensions)" },
+        "lastInspectionDate": { "type": "string", "format": "date-time" },
+        "status": { "type": "string" }
+      },
+      "required": ["owner", "propertyAddress", "zoneCode", "annualRateValue"]
+    },
+    "Inspector": {
+      "title": "Inspector",
+      "description": "LGA collection inspector roster.",
+      "type": "object",
+      "properties": {
+        "staffName": { "type": "string" },
+        "staffId": { "type": "string" },
+        "assignedZone": { "type": "string" },
+        "phoneNumber": { "type": "string" }
+      },
+      "required": ["staffName", "staffId", "assignedZone"]
+    },
+    "Assessment": {
+      "title": "Assessment",
+      "description": "Property rate assessment details.",
+      "type": "object",
+      "properties": {
+        "property": { "$ref": "#/entities/Property" },
+        "fiscalYear": { "type": "integer" },
+        "amountDue": { "type": "number" },
+        "dueDate": { "type": "string", "format": "date" },
+        "penaltyAmount": { "type": "number" }
+      },
+      "required": ["property", "fiscalYear", "amountDue", "dueDate"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Payment metadata for rate assessments.",
+      "type": "object",
+      "properties": {
+        "assessment": { "$ref": "#/entities/Assessment" },
+        "amountPaid": { "type": "number" },
+        "paymentDate": { "type": "string", "format": "date-time" },
+        "paymentReference": { "type": "string" },
+        "paymentMethod": { "type": "string" }
+      },
+      "required": ["assessment", "amountPaid", "paymentDate", "paymentReference"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User documents mapping to authenticated uids."
+    },
+    "/users/{userId}/properties/{propertyId}": {
+      "schema": { "$ref": "#/entities/Property" },
+      "description": "Property details owned by or registered directly to this user."
+    },
+    "/properties/{propertyId}": {
+      "schema": { "$ref": "#/entities/Property" },
+      "description": "Properties mapped under properties collection"
+    },
+    "/inspectors/{inspectorId}": {
+      "schema": { "$ref": "#/entities/Inspector" },
+      "description": "LGA inspector roster mapped"
+    },
+    "/assessments/{assessmentId}": {
+      "schema": { "$ref": "#/entities/Assessment" },
+      "description": "Collections of rate assessments per properties"
+    },
+    "/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/Payment" },
+      "description": "Collections of rate payments matched to assessments"
+    }
+  }
+}

@@ -38,6 +38,7 @@ export default function ValuationEngine({
   const [indRate, setIndRate] = useState(settings.industrialRate);
   const [penalty, setPenalty] = useState(settings.penaltyRate);
   const [dueDays, setDueDays] = useState(settings.duePeriodDays);
+  const [fiscalTargetField, setFiscalTargetField] = useState(settings.fiscalTarget || 150000000);
 
   const [saving, setSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -60,7 +61,8 @@ export default function ValuationEngine({
         commercialRate: Number(commRate),
         industrialRate: Number(indRate),
         penaltyRate: Number(penalty),
-        duePeriodDays: Number(dueDays)
+        duePeriodDays: Number(dueDays),
+        fiscalTarget: Number(fiscalTargetField)
       });
       setSaving(false);
       setSavedSuccess(true);
@@ -171,7 +173,7 @@ export default function ValuationEngine({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t pt-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t pt-4">
               <div>
                 <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1.5">Late Penalty Percentage (%)</label>
                 <input
@@ -196,6 +198,19 @@ export default function ValuationEngine({
                   className="w-full rounded-lg border border-gray-300 p-2.5 text-xs font-semibold focus:border-[#0A1F44]"
                 />
                 <span className="text-[10px] text-gray-400 font-medium">Number of days granted following bill dispatch before late status is activated.</span>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1.5">LGA Revenue Year Target (₦)</label>
+                <input
+                  type="number"
+                  required
+                  disabled={!isAdmin}
+                  value={fiscalTargetField}
+                  onChange={(e) => setFiscalTargetField(Number(e.target.value))}
+                  className="w-full rounded-lg border border-gray-300 p-2.5 text-xs font-semibold focus:border-[#0A1F44]"
+                />
+                <span className="text-[10px] text-gray-400 font-medium">Municipal benchmark target for revenue collection projection.</span>
               </div>
             </div>
 

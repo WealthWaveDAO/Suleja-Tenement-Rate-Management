@@ -73,11 +73,14 @@ html.dark .border-gray-200 {
   border-color: #1e293b !important;
 }
 
+html.dark .text-gray-950,
 html.dark .text-gray-900,
 html.dark .text-gray-850,
 html.dark .text-gray-800,
 html.dark .text-gray-750,
-html.dark .text-gray-700 {
+html.dark .text-gray-700,
+html.dark .text-slate-900,
+html.dark .text-slate-950 {
   color: #f8fafc !important;
 }
 
@@ -121,27 +124,42 @@ html.dark .divide-y > :not([hidden]) ~ :not([hidden]) {
 }
 
 /* Specific component dark overrides */
-html.dark .bg-[#F5F7FA] {
+html.dark .bg-\[\#F5F7FA\] {
   background-color: #162447 !important;
   color: #f8fafc !important;
 }
 
-html.dark .text-[#0A1F44] {
+html.dark .text-\[\#0A1F44\] {
   color: #38BDF8 !important;
 }
 
-html.dark .bg-[#0A1F44] {
+html.dark .bg-\[\#0A1F44\] {
   background-color: #090f23 !important;
   border: 1px solid #1e293b;
 }
 
-html.dark .bg-[#0A1F44]\/5 {
+html.dark .bg-\[\#0A1F44\]\\\/5 {
   background-color: rgba(56, 189, 248, 0.1) !important;
 }
 
-html.dark .text-[#0A1F44]\/5 {
+html.dark .text-\[\#0A1F44\]\\\/5 {
   color: rgba(56, 189, 248, 0.1) !important;
 }
+
+/* Global Color Contrast Accessibility Fixes */
+.text-gray-400-contrast {
+  color: #4b5563;
+}
+html.dark .text-gray-400-contrast {
+  color: #94a3b8;
+}
+.text-gray-300-contrast {
+  color: #374151;
+}
+html.dark .text-gray-300-contrast {
+  color: #cbd5e1;
+}
+
 
 /* Print optimization for government physical briefings */
 @media print {
