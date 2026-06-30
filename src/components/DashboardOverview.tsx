@@ -21,6 +21,8 @@ import {
   Printer,
   Search,
   X,
+  Mic,
+  MicOff,
   ChevronDown,
   ChevronUp,
   FileDown,
@@ -94,6 +96,71 @@ export default function DashboardOverview({
 }: DashboardProps) {
   const [isWardFocusExpanded, setIsWardFocusExpanded] = React.useState(true);
   const [selectedHealthPropId, setSelectedHealthPropId] = React.useState<string>('');
+
+  // Voice Search States
+  const [isListening, setIsListening] = React.useState(false);
+  const [voiceError, setVoiceError] = React.useState<string | null>(null);
+  const recognitionRef = React.useRef<any>(null);
+
+  React.useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const rec = new SpeechRecognition();
+      rec.continuous = false;
+      rec.lang = 'en-NG'; // Set to English (Nigeria) since this is for Suleja, Niger State
+      rec.interimResults = false;
+
+      rec.onstart = () => {
+        setIsListening(true);
+        setVoiceError(null);
+      };
+
+      rec.onresult = (event: any) => {
+        if (event.results && event.results[0] && event.results[0][0]) {
+          const transcript = event.results[0][0].transcript;
+          // Trim punctuation from speech results (e.g., period at the end)
+          const cleanedText = transcript.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").trim();
+          onSearchChange(cleanedText);
+        }
+      };
+
+      rec.onerror = (e: any) => {
+        console.error("Speech recognition error:", e);
+        if (e.error === 'not-allowed') {
+          setVoiceError('Microphone permission blocked by browser.');
+        } else if (e.error === 'no-speech') {
+          setVoiceError('No speech was detected. Please try again.');
+        } else {
+          setVoiceError('Voice recognition failed. Try speaking clearly.');
+        }
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+    }
+  }, [onSearchChange]);
+
+  const handleToggleVoiceSearch = () => {
+    if (!recognitionRef.current) {
+      setVoiceError('Voice recognition is not supported in this browser.');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      try {
+        setVoiceError(null);
+        recognitionRef.current.start();
+      } catch (e) {
+        console.error("Failed to start voice search:", e);
+      }
+    }
+  };
 
   // Field Agent Assigned Tasks
   const assignedTasks = React.useMemo(() => {
@@ -732,21 +799,58 @@ export default function DashboardOverview({
             <p className="text-[11px] text-gray-550 font-medium">Quickly locate properties, verify tax IDs, or review landlord profiles in real-time.</p>
           </div>
           <div className="relative flex-1 max-w-lg w-full">
-            <Search className="absolute left-3 top-3 h-4.5 w-4.5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search by address, landlord name, or tax ID (e.g. SLG-2026-00010)..."
-              value={searchQuery}
-              onChange={(e) => onSearchChange(e.target.value)}
-              className="w-full rounded-xl border border-gray-200 bg-slate-50/50 py-2.5 pl-10 pr-9 text-xs font-semibold outline-none focus:border-[#0A1F44] focus:bg-white focus:ring-2 focus:ring-[#0A1F44]/5 transition-all text-[#0A1F44]"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => onSearchChange('')}
-                className="absolute right-3 top-3 text-gray-400 hover:text-gray-600 rounded-lg p-0.5"
-              >
-                <X className="h-4 w-4" />
-              </button>
+            <div className="relative w-full">
+              <Search className="absolute left-3 top-3 h-4.5 w-4.5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search by address, landlord name, or tax ID (e.g. SLG-2026-00010)..."
+                value={searchQuery}
+                onChange={(e) => onSearchChange(e.target.value)}
+                className="w-full rounded-xl border border-gray-200 bg-slate-50/50 py-2.5 pl-10 pr-20 text-xs font-semibold outline-none focus:border-[#0A1F44] focus:bg-white focus:ring-2 focus:ring-[#0A1F44]/5 transition-all text-[#0A1F44]"
+              />
+              <div className="absolute right-2 top-1.5 flex items-center gap-1">
+                {/* Voice search button */}
+                <button
+                  type="button"
+                  onClick={handleToggleVoiceSearch}
+                  className={`p-1.5 rounded-lg transition-all relative cursor-pointer ${
+                    isListening 
+                      ? 'bg-red-500 text-white shadow-md' 
+                      : 'text-gray-400 hover:text-[#0A1F44] hover:bg-slate-100'
+                  }`}
+                  title={isListening ? "Listening... click to stop" : "Search by speaking (Voice-to-Text)"}
+                >
+                  <Mic className={`h-4 w-4 ${isListening ? 'animate-pulse' : ''}`} />
+                  {isListening && (
+                    <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-600"></span>
+                    </span>
+                  )}
+                </button>
+
+                {searchQuery && (
+                  <button
+                    onClick={() => onSearchChange('')}
+                    className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+            {isListening && (
+              <div className="absolute left-1 top-full mt-1 z-10 bg-red-50 text-red-700 border border-red-200 rounded-lg py-1 px-3 text-[10px] font-bold shadow-md flex items-center gap-1.5 animate-pulse">
+                <span className="h-2 w-2 rounded-full bg-red-600 animate-ping inline-block shrink-0" />
+                <span>Device Mic Active: Speak address or owner name...</span>
+              </div>
+            )}
+            {voiceError && (
+              <div className="absolute left-1 top-full mt-1 z-10 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg py-1 px-3 text-[10px] font-bold shadow-md flex items-center gap-2">
+                <span>⚠️ {voiceError}</span>
+                <button onClick={() => setVoiceError(null)} className="text-gray-400 hover:text-gray-600 text-[9px] font-black underline cursor-pointer shrink-0">Dismiss</button>
+              </div>
             )}
           </div>
         </div>

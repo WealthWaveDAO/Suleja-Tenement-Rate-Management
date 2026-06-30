@@ -66,6 +66,105 @@ export default function AICenter({ properties, invoices }: AICenterProps) {
   const [isRecalculating, setIsRecalculating] = useState<boolean>(false);
   const [hasRecalculated, setHasRecalculated] = useState<boolean>(false);
 
+  // Outlier detection for property valuations per ward
+  const valuationOutliers = useMemo(() => {
+    const wardGroups: { [ward: string]: Property[] } = {};
+    localProperties.forEach(p => {
+      if (!wardGroups[p.ward]) {
+        wardGroups[p.ward] = [];
+      }
+      wardGroups[p.ward].push(p);
+    });
+
+    const outliers: Array<{
+      property: Property;
+      wardMean: number;
+      wardStdDev: number;
+      zScore: number;
+      reason: string;
+    }> = [];
+
+    Object.keys(wardGroups).forEach(ward => {
+      const wardProps = wardGroups[ward];
+      if (wardProps.length < 5) return;
+
+      const values = wardProps.map(p => p.annualRentalValue);
+      const sum = values.reduce((a, b) => a + b, 0);
+      const mean = sum / values.length;
+
+      const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
+      const stdDev = Math.sqrt(variance);
+
+      if (stdDev === 0) return;
+
+      wardProps.forEach(p => {
+        const zScore = (p.annualRentalValue - mean) / stdDev;
+        // Highlight extreme outliers: absolute Z-Score > 2.2
+        if (Math.abs(zScore) > 2.2) {
+          outliers.push({
+            property: p,
+            wardMean: mean,
+            wardStdDev: stdDev,
+            zScore: zScore,
+            reason: zScore > 0 
+              ? `Valuation is extremely high compared to the ward average (Z-score: +${zScore.toFixed(2)})`
+              : `Valuation is extremely low compared to the ward average (Z-score: ${zScore.toFixed(2)})`
+          });
+        }
+      });
+    });
+
+    return outliers.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));
+  }, [localProperties]);
+
+  const handleRecalibrateValuation = (propertyId: string, targetValue: number) => {
+    setLocalProperties(prev => prev.map(p => {
+      if (p.id === propertyId) {
+        const annualRentalValue = Math.round(targetValue);
+        const tenementRate = Math.round(annualRentalValue * (p.ratePercentage / 100));
+        return {
+          ...p,
+          annualRentalValue,
+          tenementRate,
+          description: `${p.description || ''} (Valuation statistical outlier auto-recalibrated to ward average on ${new Date().toLocaleDateString()})`
+        };
+      }
+      return p;
+    }));
+  };
+
+  const handleFlagForInspection = (propertyId: string) => {
+    setLocalProperties(prev => prev.map(p => {
+      if (p.id === propertyId) {
+        return {
+          ...p,
+          inspectorName: 'AI Audit Flagged',
+          description: `${p.description || ''} (Flagged for mandatory physical re-assessment due to extreme statistical outlier on ${new Date().toLocaleDateString()})`
+        };
+      }
+      return p;
+    }));
+  };
+
+  const simulateValuationTypo = () => {
+    const randomIndex = Math.floor(Math.random() * localProperties.length);
+    const target = localProperties[randomIndex];
+    if (target) {
+      setLocalProperties(prev => prev.map((p, idx) => {
+        if (idx === randomIndex) {
+          const newVal = p.annualRentalValue * 10;
+          return {
+            ...p,
+            annualRentalValue: newVal,
+            tenementRate: Math.round(newVal * (p.ratePercentage / 100)),
+            description: `${p.description || ''} (Simulated data entry valuation typo introduced for audit testing)`
+          };
+        }
+        return p;
+      }));
+    }
+  };
+
   // Automated diagnostic check: Marked 'Paid' but missing a transaction reference in invoice record
   const ledgerDiscrepancies = useMemo(() => {
     return localProperties.filter(p => {
@@ -584,6 +683,125 @@ ${scoredProperties
           >
             <RefreshCw className="h-3.5 w-3.5 animate-spin" style={{ animationDuration: '3s' }} />
             Simulate Discrepancy
+          </button>
+        </div>
+      )}
+
+      {/* 📊 AI VALUATION INTEGRITY OUTLIER AUDIT PANELS */}
+      {valuationOutliers.length > 0 ? (
+        <div className="bg-amber-50/75 border border-amber-200 rounded-xl p-5 shadow-3xs space-y-4 animate-in fade-in duration-300 text-left">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-amber-100 text-amber-800 rounded-lg shrink-0 mt-0.5 animate-pulse">
+                <ShieldAlert className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] font-mono font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded uppercase">AI VALUATION EXTREME OUTLIERS DETECTED</span>
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-ping" />
+                </div>
+                <h3 className="font-display font-black text-slate-900 text-sm">
+                  Property Valuation Statistical Outlier Flag
+                </h3>
+                <p className="text-[10.5px] text-gray-500 font-semibold leading-relaxed font-sans">
+                  The AI statistical engine has identified <b className="text-amber-800 font-bold font-mono">{valuationOutliers.length}</b> records where property valuations deviate from their respective ward averages by more than <b className="text-amber-800 font-bold">2.2 standard deviations</b>. These are highly likely to be human data entry typos (such as extra zeros).
+                </p>
+              </div>
+            </div>
+            
+            <button
+              type="button"
+              onClick={simulateValuationTypo}
+              className="bg-amber-700 hover:bg-amber-850 text-white font-bold py-1.5 px-3 rounded-lg text-[10px] shadow-sm select-none transition-all cursor-pointer whitespace-nowrap self-start"
+            >
+              Simulate Typo Outlier (+10x)
+            </button>
+          </div>
+
+          {/* List of Outliers */}
+          <div className="border border-amber-100 bg-white/80 rounded-xl overflow-hidden max-h-60 overflow-y-auto divide-y divide-amber-50">
+            {valuationOutliers.map((anomaly, idx) => {
+              const isFlagged = anomaly.property.inspectorName === 'AI Audit Flagged';
+              return (
+                <div key={idx} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-[10.5px] hover:bg-amber-50/20 transition-colors">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <span className="font-mono font-extrabold text-[#0A1F44] bg-slate-100 px-1.5 py-0.5 rounded text-[10px]">
+                        {anomaly.property.id}
+                      </span>
+                      <span className="font-sans font-bold text-gray-700">
+                        {anomaly.property.ownerName}
+                      </span>
+                      <span className="text-gray-300 font-medium">|</span>
+                      <span className="text-gray-500 font-semibold flex items-center gap-1">
+                        <MapPin className="h-3 w-3 text-[#38BDF8]" />
+                        {anomaly.property.ward} Ward ({anomaly.property.propertyType})
+                      </span>
+                      {isFlagged && (
+                        <span className="bg-red-150 text-red-700 text-[8px] font-black uppercase px-1.5 py-0.5 rounded flex items-center gap-1">
+                          <AlertCircle className="h-2.5 w-2.5 animate-pulse" />
+                          Inspection Flagged
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-gray-650 font-semibold leading-relaxed">
+                      <span className="text-amber-800 font-bold">Deviation:</span> {anomaly.reason}
+                      <span className="text-gray-400 block font-mono text-[9px] mt-0.5">
+                        Current Value: <b className="text-red-600 font-bold">₦{anomaly.property.annualRentalValue.toLocaleString()}</b> | Ward Mean: <b className="text-slate-700 font-bold">₦{Math.round(anomaly.wardMean).toLocaleString()}</b> | StdDev: ₦{Math.round(anomaly.wardStdDev).toLocaleString()}
+                      </span>
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleRecalibrateValuation(anomaly.property.id, anomaly.wardMean)}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded-lg text-[10px] shadow-3xs transition-all cursor-pointer flex items-center gap-1 border border-emerald-700/10 select-none font-sans"
+                      title="Adjust valuation directly to ward statistical mean"
+                    >
+                      <Check className="h-3 w-3" />
+                      Auto-Recalibrate
+                    </button>
+                    {!isFlagged && (
+                      <button
+                        type="button"
+                        onClick={() => handleFlagForInspection(anomaly.property.id)}
+                        className="bg-amber-650 hover:bg-amber-700 text-white font-bold py-1.5 px-3 rounded-lg text-[10px] shadow-3xs transition-all cursor-pointer flex items-center gap-1 border border-amber-700/10 select-none font-sans"
+                        title="Flag for physical review and field inspection check"
+                      >
+                        <ShieldAlert className="h-3 w-3" />
+                        Flag for Inspection
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="bg-emerald-50/40 border border-emerald-150 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-200 text-left">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-emerald-100 text-emerald-700 rounded-lg shrink-0">
+              <CheckCircle2 className="h-4.5 w-4.5" />
+            </div>
+            <div className="space-y-0.5">
+              <h4 className="font-display font-extrabold text-[#0A1F44] text-xs">
+                Valuation Integrity: Statistical Baseline Perfect
+              </h4>
+              <p className="text-[10.5px] text-gray-500 font-semibold leading-relaxed">
+                Property valuation distribution analysis complete. No anomalous valuation outliers (Z-score &gt; 2.2) were found inside any ward. Valuations are clean and robust.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={simulateValuationTypo}
+            className="text-[10px] text-amber-650 hover:text-amber-800 hover:underline font-bold transition-all cursor-pointer whitespace-nowrap self-start sm:self-center uppercase tracking-wider font-mono flex items-center gap-1.5 bg-white border border-amber-150 px-2.5 py-1.5 rounded-lg shadow-3xs select-none"
+          >
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" style={{ animationDuration: '3s' }} />
+            Simulate Valuation Typo
           </button>
         </div>
       )}

@@ -6,7 +6,7 @@
 import React from 'react';
 import { Landmark, ArrowRight, CheckCircle2, MapPin, Compass } from 'lucide-react';
 import { User } from '../types';
-const zumaRockImage = '/src/assets/images/zuma_rock_atmospheric_1781044432807.png';
+const zumaRockImage = 'https://drive.google.com/uc?export=view&id=1vTaXCCfsdZ5lhAJkniJIEbhXZOXw6j_K';
 
 interface ZumaRockBannerProps {
   onOpenLogin: () => void;
@@ -71,12 +71,14 @@ export default function ZumaRockBanner({ onOpenLogin, onOpenTaxpayerLogin, curre
                   <ArrowRight className="ml-2 h-4 w-4 text-white" />
                 </button>
               )}
-              <button
-                onClick={onOpenLogin}
-                className="rounded-xl border border-white/20 bg-white/5 px-6 py-3.5 text-sm font-semibold text-white backdrop-blur-md shadow-md transition-all hover:bg-white/10 cursor-pointer"
-              >
-                {currentUser ? `Go to Console (${currentUser.name})` : 'Portal Login (Staff)'}
-              </button>
+              {currentUser && (
+                <button
+                  onClick={onOpenLogin}
+                  className="rounded-xl border border-white/20 bg-white/5 px-6 py-3.5 text-sm font-semibold text-white backdrop-blur-md shadow-md transition-all hover:bg-white/10 cursor-pointer"
+                >
+                  Go to Console ({currentUser.name})
+                </button>
+              )}
             </div>
 
 

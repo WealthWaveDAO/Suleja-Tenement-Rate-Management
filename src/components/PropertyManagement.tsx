@@ -28,6 +28,8 @@ import {
   Camera,
   Printer,
   Clock,
+  Mic,
+  MicOff,
   Receipt
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -110,6 +112,71 @@ export default function PropertyManagement({
 
   // Search & Filter State
   const [search, setSearch] = useState('');
+  
+  // Voice Search States for Property Management
+  const [isListening, setIsListening] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const rec = new SpeechRecognition();
+      rec.continuous = false;
+      rec.lang = 'en-NG'; // Nigeria English localization
+      rec.interimResults = false;
+
+      rec.onstart = () => {
+        setIsListening(true);
+        setVoiceError(null);
+      };
+
+      rec.onresult = (event: any) => {
+        if (event.results && event.results[0] && event.results[0][0]) {
+          const transcript = event.results[0][0].transcript;
+          const cleanedText = transcript.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").trim();
+          setSearch(cleanedText);
+          setCurrentPage(1);
+        }
+      };
+
+      rec.onerror = (e: any) => {
+        console.error("Speech recognition error in property search:", e);
+        if (e.error === 'not-allowed') {
+          setVoiceError('Microphone permission blocked by browser.');
+        } else if (e.error === 'no-speech') {
+          setVoiceError('No speech detected. Speak clearly.');
+        } else {
+          setVoiceError('Voice search failed. Please try again.');
+        }
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+    }
+  }, []);
+
+  const handleToggleVoiceSearch = () => {
+    if (!recognitionRef.current) {
+      setVoiceError('Voice recognition is not supported in this browser.');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      try {
+        setVoiceError(null);
+        recognitionRef.current.start();
+      } catch (e) {
+        console.error("Failed to start voice search in properties:", e);
+      }
+    }
+  };
   const [selectedWard, setSelectedWard] = useState('');
   const [selectedType, setSelectedType] = useState<PropertyType | ''>('');
   const [selectedStatus, setSelectedStatus] = useState<TaxPaymentStatus | ''>('');
@@ -123,6 +190,7 @@ export default function PropertyManagement({
   const [showFormModal, setShowFormModal] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [activePropertyId, setActivePropertyId] = useState<string | null>(null);
+  const [propertyToDelete, setPropertyToDelete] = useState<Property | null>(null);
 
   // Form Field States
   const [ownerName, setOwnerName] = useState('');
@@ -1763,7 +1831,10 @@ export default function PropertyManagement({
           
           {/* Smart Search Bar */}
           <div className="md:col-span-12 lg:col-span-5 space-y-1">
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider">Property Search</label>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider flex items-center justify-between">
+              <span>Property Search</span>
+              {isListening && <span className="text-red-600 font-extrabold animate-pulse text-[9px]">● Voice Listening...</span>}
+            </label>
             <div className="relative">
               <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                 <Search className="h-4 w-4 text-gray-400" />
@@ -1776,9 +1847,39 @@ export default function PropertyManagement({
                   setSearch(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="block w-full rounded-lg border border-gray-250 py-2.5 pl-9 pr-3 text-xs outline-none focus:border-[#0A1F44] w-full bg-[#f8fafc]/50 focus:bg-white transition"
+                className="block w-full rounded-lg border border-gray-250 py-2.5 pl-9 pr-16 text-xs outline-none focus:border-[#0A1F44] w-full bg-[#f8fafc]/50 focus:bg-white transition"
               />
+              <div className="absolute right-2 top-1.5 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleToggleVoiceSearch}
+                  className={`p-1.5 rounded-lg transition-all relative cursor-pointer ${
+                    isListening 
+                      ? 'bg-red-500 text-white animate-pulse' 
+                      : 'text-gray-400 hover:text-[#0A1F44] hover:bg-slate-100'
+                  }`}
+                  title={isListening ? "Listening... click to stop" : "Speak to search"}
+                >
+                  <Mic className="h-4 w-4" />
+                </button>
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => { setSearch(''); setCurrentPage(1); }}
+                    className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-slate-100 cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             </div>
+            {voiceError && (
+              <div className="text-[10px] text-amber-700 bg-amber-50 p-1.5 rounded-lg border border-amber-200 mt-1 flex items-center justify-between font-semibold">
+                <span>⚠️ {voiceError}</span>
+                <button onClick={() => setVoiceError(null)} className="text-gray-400 hover:text-gray-600 text-[9px] underline">Dismiss</button>
+              </div>
+            )}
           </div>
 
           {/* Ward filter select */}
@@ -2372,11 +2473,7 @@ export default function PropertyManagement({
                           {/* Delete restrict: LGA & Super Admin only */}
                           {(userRole === 'Super Admin' || userRole === 'LGA Admin') && (
                             <button
-                              onClick={() => {
-                                if (confirm(`De-register property ${p.id} and wipe invoice indices?`)) {
-                                  onDeleteProperty(p.id);
-                                }
-                              }}
+                              onClick={() => setPropertyToDelete(p)}
                               title="Delete Record Permanently"
                               className="p-1 text-red-500 hover:bg-white rounded-md cursor-pointer"
                             >
@@ -2864,6 +2961,86 @@ export default function PropertyManagement({
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Single Property Delete Confirmation Modal */}
+      {propertyToDelete && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-red-105 max-w-md w-full overflow-hidden shadow-2xl relative select-text text-black text-xs font-sans animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-red-650 p-5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-white animate-pulse" />
+                <div>
+                  <span className="block text-[9px] font-mono font-bold text-red-100 uppercase tracking-wider">MUNICIPAL REGISTRY SECURITY</span>
+                  <h4 className="font-sans font-bold text-sm tracking-tight">Confirm Property De-registration</h4>
+                </div>
+              </div>
+              <button
+                onClick={() => setPropertyToDelete(null)}
+                className="text-white hover:text-red-100 font-bold text-lg cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-red-50 border border-red-100 rounded-xl p-3.5 space-y-2 text-left">
+                <p className="font-bold text-red-800 text-[11px] uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Irreversible Action Warning
+                </p>
+                <p className="text-gray-600 leading-relaxed font-semibold text-[10.5px]">
+                  You are about to permanently purge this tenement from the Niger State digital land registry. All associated bills, tax assessments, payment invoices, and historical ledger details will be permanently wiped.
+                </p>
+              </div>
+
+              <div className="border border-gray-150 rounded-xl bg-gray-50/50 p-4 space-y-3 text-left">
+                <h5 className="font-sans font-bold text-[#0A1F44] border-b pb-1.5 uppercase tracking-wide text-[9px] text-gray-500">Record to De-register</h5>
+                
+                <div className="grid grid-cols-3 gap-2 text-[10.5px]">
+                  <span className="text-gray-550 font-bold">Property ID:</span>
+                  <span className="col-span-2 font-mono font-black text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded border border-gray-200 inline-block w-fit text-[9px]">{propertyToDelete.id}</span>
+                  
+                  <span className="text-gray-550 font-bold">Owner Name:</span>
+                  <span className="col-span-2 font-bold text-gray-800">{propertyToDelete.ownerName}</span>
+
+                  <span className="text-gray-550 font-bold">Ward Zone:</span>
+                  <span className="col-span-2 font-semibold text-gray-750">{propertyToDelete.ward} Ward</span>
+
+                  <span className="text-gray-550 font-bold">Property Type:</span>
+                  <span className="col-span-2 font-semibold text-gray-750">{propertyToDelete.propertyType}</span>
+
+                  <span className="text-gray-550 font-bold">Address:</span>
+                  <span className="col-span-2 text-gray-700 font-semibold truncate" title={propertyToDelete.address}>{propertyToDelete.address}</span>
+
+                  <span className="text-gray-550 font-bold">Assessed Rate:</span>
+                  <span className="col-span-2 font-mono text-red-700 font-extrabold text-[11px]">₦{propertyToDelete.tenementRate.toLocaleString()}</span>
+                </div>
+              </div>
+
+              <div className="flex gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setPropertyToDelete(null)}
+                  className="flex-1 border bg-white hover:bg-gray-50 text-gray-605 rounded-lg py-2.5 text-xs font-bold cursor-pointer font-sans"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onDeleteProperty(propertyToDelete.id);
+                    setPropertyToDelete(null);
+                  }}
+                  className="flex-1 bg-red-650 hover:bg-red-750 text-white rounded-lg py-2.5 text-xs font-bold transition-all justify-center flex items-center gap-1 cursor-pointer font-sans shadow-md"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  De-register & Purge
+                </button>
+              </div>
             </div>
           </div>
         </div>

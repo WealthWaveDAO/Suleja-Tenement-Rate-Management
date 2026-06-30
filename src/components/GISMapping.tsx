@@ -17,8 +17,12 @@ import {
   CheckCircle2, 
   Clock, 
   X,
+  Mic,
+  MicOff,
   Map,
-  BadgeAlert
+  BadgeAlert,
+  Home,
+  Factory
 } from 'lucide-react';
 import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin, InfoWindow, useMap } from '@vis.gl/react-google-maps';
 import { Property, TaxPaymentStatus } from '../types';
@@ -56,6 +60,70 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
   const [activeWardFilter, setActiveWardFilter] = useState<string>('');
   const [activeStatusFilter, setActiveStatusFilter] = useState<TaxPaymentStatus | ''>('');
   const [gisSearchQuery, setGisSearchQuery] = useState<string>('');
+  
+  // Voice Search States for GIS module
+  const [isListening, setIsListening] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const recognitionRef = React.useRef<any>(null);
+
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const rec = new SpeechRecognition();
+      rec.continuous = false;
+      rec.lang = 'en-NG'; // Nigeria English language localization
+      rec.interimResults = false;
+
+      rec.onstart = () => {
+        setIsListening(true);
+        setVoiceError(null);
+      };
+
+      rec.onresult = (event: any) => {
+        if (event.results && event.results[0] && event.results[0][0]) {
+          const transcript = event.results[0][0].transcript;
+          const cleanedText = transcript.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").trim();
+          setGisSearchQuery(cleanedText);
+        }
+      };
+
+      rec.onerror = (e: any) => {
+        console.error("Speech recognition error in GIS mapping:", e);
+        if (e.error === 'not-allowed') {
+          setVoiceError('Microphone permission blocked by browser.');
+        } else if (e.error === 'no-speech') {
+          setVoiceError('No speech detected. Speak clearly.');
+        } else {
+          setVoiceError('Voice search failed. Please try again.');
+        }
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+    }
+  }, []);
+
+  const handleToggleVoiceSearch = () => {
+    if (!recognitionRef.current) {
+      setVoiceError('Voice recognition is not supported in this browser.');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      try {
+        setVoiceError(null);
+        recognitionRef.current.start();
+      } catch (e) {
+        console.error("Failed to start voice search in GIS:", e);
+      }
+    }
+  };
   const [zoomScale, setZoomScale] = useState<number>(1);
   const [panX, setPanX] = useState<number>(0);
   const [panY, setPanY] = useState<number>(0);
@@ -208,12 +276,40 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
     if (activePropertyFocus) {
       setMapCenter({ lat: activePropertyFocus.latitude, lng: activePropertyFocus.longitude });
       setMapZoom(16);
+      
+      // Center and zoom simulated map
+      const minLat = 9.15;
+      const maxLat = 9.22;
+      const minLng = 7.15;
+      const maxLng = 7.24;
+      const x = ((activePropertyFocus.longitude - minLng) / (maxLng - minLng)) * 100;
+      const y = 100 - (((activePropertyFocus.latitude - minLat) / (maxLat - minLat)) * 100);
+      
+      setZoomScale(1.8);
+      setPanX(50 - x);
+      setPanY(50 - y);
     } else if (activeWardFilter) {
       const selectedWard = SULEJA_WARDS.find(w => w.name === activeWardFilter);
       if (selectedWard) {
         setMapCenter({ lat: selectedWard.centerLat, lng: selectedWard.centerLng });
         setMapZoom(15);
+        
+        // Center simulated map on ward
+        const minLat = 9.15;
+        const maxLat = 9.22;
+        const minLng = 7.15;
+        const maxLng = 7.24;
+        const x = ((selectedWard.centerLng - minLng) / (maxLng - minLng)) * 100;
+        const y = 100 - (((selectedWard.centerLat - minLat) / (maxLat - minLat)) * 100);
+        
+        setZoomScale(1.4);
+        setPanX(50 - x);
+        setPanY(50 - y);
       }
+    } else {
+      setZoomScale(1);
+      setPanX(0);
+      setPanY(0);
     }
   }, [activePropertyFocus, activeWardFilter]);
 
@@ -397,7 +493,80 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                   >
                     <MapRecenter center={mapCenter} zoom={mapZoom} />
                     
-                    {filteredGISProps.map((p) => {
+                    {/* Compliance Heatmap Overlay on Google Map */}
+                    {showHeatmap && heatmapType === 'compliance' && wardComplianceStats.map((w) => {
+                      const latLng = SULEJA_WARDS.find(sw => sw.name === w.name);
+                      if (!latLng) return null;
+                      const color = d3ColorScale(w.complianceRate) || '#ef4444';
+                      return (
+                        <AdvancedMarker
+                          key={`interactive-heatmap-comp-${w.name}`}
+                          position={{ lat: latLng.centerLat, lng: latLng.centerLng }}
+                        >
+                          <div 
+                            style={{
+                              backgroundColor: color,
+                              width: `${70 + (Math.sqrt(w.totalCount || 1) * 20)}px`,
+                              height: `${70 + (Math.sqrt(w.totalCount || 1) * 20)}px`,
+                              borderRadius: '50%',
+                              filter: 'blur(22px)',
+                              opacity: 0.45,
+                              transform: 'translate(-50%, -50%)',
+                              pointerEvents: 'none',
+                              zIndex: 1
+                            }}
+                          />
+                        </AdvancedMarker>
+                      );
+                    })}
+
+                    {/* Delinquency Heatmap Overlay on Google Map */}
+                    {showHeatmap && heatmapType === 'delinquency' && wardDelinquentStats.map((w) => {
+                      const latLng = SULEJA_WARDS.find(sw => sw.name === w.name);
+                      if (!latLng) return null;
+                      const color = d3DelinquencyColorScale(w.delinquentRate) || '#10b981';
+                      return (
+                        <AdvancedMarker
+                          key={`interactive-heatmap-delinq-${w.name}`}
+                          position={{ lat: latLng.centerLat, lng: latLng.centerLng }}
+                        >
+                          <div 
+                            style={{
+                              backgroundColor: color,
+                              width: `${70 + (Math.sqrt(w.delinquentCount || 1) * 20)}px`,
+                              height: `${70 + (Math.sqrt(w.delinquentCount || 1) * 20)}px`,
+                              borderRadius: '50%',
+                              filter: 'blur(22px)',
+                              opacity: 0.45,
+                              transform: 'translate(-50%, -50%)',
+                              pointerEvents: 'none',
+                              zIndex: 1
+                            }}
+                          />
+                        </AdvancedMarker>
+                      );
+                    })}
+
+                    {/* Custom Ward Label Badges on Google Map */}
+                    {showWardBoundaries && SULEJA_WARDS.map((w) => {
+                      const stats = wardComplianceStats.find(cs => cs.name === w.name);
+                      const compliance = stats ? stats.complianceRate : 50;
+                      const color = d3ColorScale(compliance) || '#ef4444';
+                      return (
+                        <AdvancedMarker
+                          key={`interactive-ward-label-${w.name}`}
+                          position={{ lat: w.centerLat, lng: w.centerLng }}
+                        >
+                          <div className="bg-slate-950/90 text-white border border-white/20 px-2.5 py-1.5 rounded-xl text-[10px] font-black font-mono shadow-2xl flex items-center gap-1.5 whitespace-nowrap transform -translate-x-1/2 -translate-y-1/2 z-10 select-none pointer-events-auto">
+                            <span className="h-2 w-2 rounded-full inline-block shrink-0 animate-pulse" style={{ backgroundColor: color }} />
+                            <span>{w.name}: <b className="text-[#38BDF8]">{compliance}% Paid</b></span>
+                          </div>
+                        </AdvancedMarker>
+                      );
+                    })}
+
+                    {/* Property Pins Layer */}
+                    {showPropertyPins && filteredGISProps.map((p) => {
                       const statusColor = 
                         p.paymentStatus === 'Paid' ? '#10B981' : 
                         p.paymentStatus === 'Pending' ? '#F59E0B' : '#EF4444';
@@ -409,15 +578,77 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                           position={{ lat: p.latitude, lng: p.longitude }}
                           onClick={() => setLocalFocusedProperty(p)}
                         >
-                          <Pin 
-                            background={statusColor} 
-                            borderColor={isActive ? '#FFFFFF' : '#060c15'}
-                            glyphColor="#FFFFFF"
-                            scale={isActive ? 1.25 : 0.9}
-                          />
+                          <div className={`relative transition-all duration-300 ${isActive ? 'scale-125 z-50' : 'scale-100 hover:scale-110 z-10'}`}>
+                            <div className="flex flex-col items-center cursor-pointer">
+                              {/* Pulse halo for active selected pin */}
+                              {isActive && (
+                                <span className="absolute -top-1.5 w-11 h-11 rounded-full bg-white/20 animate-ping pointer-events-none" />
+                              )}
+                              {/* Outer custom Pin wrap with payment status icon */}
+                              <div 
+                                className="flex items-center justify-center rounded-full w-9 h-9 shadow-lg border-2 transition-colors duration-200"
+                                style={{
+                                  backgroundColor: statusColor,
+                                  borderColor: isActive ? '#FFFFFF' : '#060c15',
+                                }}
+                              >
+                                {p.paymentStatus === 'Paid' && (
+                                  <CheckCircle2 className="h-4.5 w-4.5 text-white" />
+                                )}
+                                {p.paymentStatus === 'Pending' && (
+                                  <Clock className="h-4.5 w-4.5 text-white animate-pulse" />
+                                )}
+                                {p.paymentStatus === 'Unpaid' && (
+                                  <BadgeAlert className="h-4.5 w-4.5 text-white" />
+                                )}
+                              </div>
+                              {/* Pin pointer tip */}
+                              <div 
+                                className="w-2.5 h-2.5 -mt-1.5 rotate-45 border-r border-b"
+                                style={{
+                                  backgroundColor: statusColor,
+                                  borderColor: isActive ? '#FFFFFF' : '#060c15',
+                                }}
+                              />
+                            </div>
+                          </div>
                         </AdvancedMarker>
                       );
                     })}
+
+                    {/* Compact Property InfoWindow directly on the map when clicked */}
+                    {localFocusedProperty && (
+                      <InfoWindow
+                        position={{ lat: localFocusedProperty.latitude, lng: localFocusedProperty.longitude }}
+                        onCloseClick={() => setLocalFocusedProperty(null)}
+                      >
+                        <div className="p-2.5 text-slate-900 min-w-[210px] font-sans">
+                          <div className="flex items-center justify-between border-b border-gray-150 pb-1.5 mb-2 gap-2">
+                            <span className="font-mono text-[9px] font-black bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-gray-200">
+                              {localFocusedProperty.id}
+                            </span>
+                            <span className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded ${
+                              localFocusedProperty.paymentStatus === 'Paid' ? 'bg-emerald-100 text-emerald-800' :
+                              localFocusedProperty.paymentStatus === 'Pending' ? 'bg-amber-100 text-amber-800' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              {localFocusedProperty.paymentStatus}
+                            </span>
+                          </div>
+                          
+                          <div className="space-y-1 text-left">
+                            <h4 className="font-bold text-xs text-slate-900 truncate">{localFocusedProperty.ownerName}</h4>
+                            <p className="text-[10px] text-slate-500 truncate">{localFocusedProperty.address}</p>
+                            <p className="text-[9px] text-slate-400 font-medium">{localFocusedProperty.ward} Ward</p>
+                            
+                            <div className="flex justify-between items-center bg-slate-50 border border-slate-100 p-1.5 rounded font-mono text-[10px] mt-2">
+                              <span className="text-slate-500 font-sans text-[9px]">Rate Due:</span>
+                              <span className="text-indigo-650 font-bold">₦{localFocusedProperty.tenementRate.toLocaleString()}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </InfoWindow>
+                    )}
                   </GoogleMap>
                 </APIProvider>
 
@@ -515,7 +746,7 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                 <div 
                   className="relative w-full max-w-lg aspect-square select-none transition-transform"
                   style={{
-                    transform: `scale(${zoomScale}) translate(${panX}px, ${panY}px)`,
+                    transform: `scale(${zoomScale}) translate(${panX}%, ${panY}%)`,
                     transformOrigin: 'center center'
                   }}
                 >
@@ -648,21 +879,28 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                 })}
 
                 {/* Ward Labels */}
-                {simulatedWardOutlines.map((w) => (
-                  <text
-                    key={`label-${w.name}`}
-                    x={w.x}
-                    y={w.y - 2.5}
-                    fill="#ffffff"
-                    opacity={0.35}
-                    fontSize="2"
-                    fontFamily="system-ui"
-                    fontWeight="bold"
-                    textAnchor="middle"
-                  >
-                    {w.name}
-                  </text>
-                ))}
+                {simulatedWardOutlines.map((w) => {
+                  const compStats = wardComplianceStats.find(cs => cs.name === w.name);
+                  const complianceRate = compStats ? compStats.complianceRate : 50;
+                  const displayLabel = showHeatmap && heatmapType === 'compliance' 
+                    ? `${w.name} (${complianceRate}%)`
+                    : w.name;
+                  return (
+                    <text
+                      key={`label-${w.name}`}
+                      x={w.x}
+                      y={w.y - 2.5}
+                      fill="#ffffff"
+                      opacity={0.45}
+                      fontSize="2"
+                      fontFamily="system-ui"
+                      fontWeight="bold"
+                      textAnchor="middle"
+                    >
+                      {displayLabel}
+                    </text>
+                  );
+                })}
 
                 {/* Plotted GIS Pin coordinates */}
                 {showPropertyPins && mapCoordinates.map((node) => {
@@ -683,24 +921,47 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                       {isActive && (
                         <circle 
                           cx={node.x} cy={node.y} 
-                          r="3.5" 
+                          r="4" 
                           fill="none" 
                           stroke={statusColor} 
-                          strokeWidth="0.5" 
+                          strokeWidth="0.4" 
                           className="animate-pulse"
                         />
                       )}
 
-                      {/* Standard Pin Node DOT */}
-                      <circle 
-                        cx={node.x} 
-                        cy={node.y} 
-                        r={isActive ? "2" : "1.2"} 
-                        fill={statusColor} 
-                        stroke="#060c15" 
-                        strokeWidth="0.25"
-                        className="transition-all group-hover:r-2.5"
-                      />
+                      {/* Custom SVG Geodesic Pin Marker with Payment Status Icon inside */}
+                      <g transform={`translate(${node.x}, ${node.y}) scale(${isActive ? 0.38 : 0.26})`}>
+                        {/* Pin base background pointer */}
+                        <path 
+                          d="M 0,0 C -2,-2 -3,-4 -3,-6 C -3,-8 -1.5,-9.5 0,-9.5 C 1.5,-9.5 3,-8 3,-6 C 3,-4 2,-2 0,0 Z"
+                          fill={statusColor}
+                          stroke="#060c15"
+                          strokeWidth="0.5"
+                        />
+                        {/* Inner icon (white) based on payment status */}
+                        {node.property.paymentStatus === 'Paid' && (
+                          <path 
+                            d="M -1.2, -6.3 L -0.3, -5.3 L 1.2, -7.3" 
+                            fill="none" 
+                            stroke="#ffffff" 
+                            strokeWidth="0.5" 
+                            strokeLinecap="round" 
+                            strokeLinejoin="round" 
+                          />
+                        )}
+                        {node.property.paymentStatus === 'Pending' && (
+                          <g fill="none" stroke="#ffffff" strokeWidth="0.4" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="0" cy="-6" r="1.5" />
+                            <path d="M 0, -6.9 V -6 H 0.6" />
+                          </g>
+                        )}
+                        {node.property.paymentStatus === 'Unpaid' && (
+                          <g stroke="#ffffff" strokeLinecap="round">
+                            <path d="M 0, -7.3 V -5.5" strokeWidth="0.5" />
+                            <circle cx="0" cy="-4.3" r="0.25" fill="#ffffff" stroke="none" />
+                          </g>
+                        )}
+                      </g>
 
                       {/* Simple node HUD on hover */}
                       <title>{`${node.property.id}: ${node.property.ownerName} (${node.property.ward})`}</title>
@@ -773,6 +1034,62 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                           <span className="text-emerald-400 font-bold">₦{hoveredProperty.tenementRate.toLocaleString()}</span>
                         </div>
                       </div>
+                    </div>
+                  );
+                })()
+              )}
+
+              {/* Compact Property InfoWindow popover directly on the simulated map when clicked */}
+              {localFocusedProperty && (
+                (() => {
+                  const node = mapCoordinates.find(n => n.property.id === localFocusedProperty.id);
+                  if (!node) return null;
+                  return (
+                    <div 
+                      className="absolute bg-slate-900/95 border border-white/20 rounded-lg p-2.5 shadow-xl text-white select-text z-50 font-sans text-left text-[10px] w-48 transition-all pointer-events-auto"
+                      style={{
+                        left: `${node.x}%`,
+                        top: `${node.y}%`,
+                        transform: 'translate(-50%, calc(-100% - 12px))',
+                      }}
+                    >
+                      {/* Triangle pointer indicator */}
+                      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-l-transparent border-r-transparent border-t-slate-900/95" />
+                      
+                      <div className="flex items-center justify-between border-b border-white/10 pb-1 mb-1.5 gap-1.5">
+                        <span className="font-mono text-[8px] font-bold bg-white/10 text-gray-300 px-1 py-0.5 rounded">
+                          {localFocusedProperty.id}
+                        </span>
+                        <span className={`text-[8px] font-black uppercase px-1 py-0.5 rounded ${
+                          localFocusedProperty.paymentStatus === 'Paid' ? 'bg-emerald-500/20 text-emerald-400' :
+                          localFocusedProperty.paymentStatus === 'Pending' ? 'bg-amber-500/20 text-amber-400' :
+                          'bg-red-500/20 text-red-400'
+                        }`}>
+                          {localFocusedProperty.paymentStatus}
+                        </span>
+                      </div>
+                      
+                      <div className="space-y-0.5">
+                        <h4 className="font-bold text-[10px] truncate text-white">{localFocusedProperty.ownerName}</h4>
+                        <p className="text-[9px] text-gray-400 truncate">{localFocusedProperty.address}</p>
+                        <p className="text-[8px] text-gray-500">{localFocusedProperty.ward} Ward</p>
+                        
+                        <div className="flex justify-between items-center bg-white/5 p-1 rounded font-mono text-[9px] mt-1.5">
+                          <span className="text-gray-400 text-[8px]">Due:</span>
+                          <span className="text-[#38BDF8] font-bold">₦{localFocusedProperty.tenementRate.toLocaleString()}</span>
+                        </div>
+                      </div>
+
+                      <button 
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLocalFocusedProperty(null);
+                        }}
+                        className="absolute -top-1 -right-1 p-0.5 bg-slate-800 hover:bg-slate-750 text-gray-400 hover:text-white rounded-full cursor-pointer flex items-center justify-center"
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
                     </div>
                   );
                 })()
@@ -880,7 +1197,10 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
 
             {/* Smart GIS Query search */}
             <div>
-              <label className="block text-[10px] uppercase font-bold text-gray-400 mb-1.5">GIS Quick Query</label>
+              <label className="block text-[10px] uppercase font-bold text-gray-400 mb-1.5 flex items-center justify-between">
+                <span>GIS Quick Query</span>
+                {isListening && <span className="text-red-500 font-extrabold animate-pulse">● Mic Active</span>}
+              </label>
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" />
                 <input
@@ -888,9 +1208,39 @@ export default function GISMapping({ properties, selectedProperty, onClearSelect
                   placeholder="ID or landlord name query..."
                   value={gisSearchQuery}
                   onChange={(e) => setGisSearchQuery(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 py-2 pl-8 pr-2 text-xs outline-none focus:border-[#0A1F44]"
+                  className="w-full rounded-lg border border-gray-300 py-2 pl-8 pr-16 text-xs outline-none focus:border-[#0A1F44]"
                 />
+                <div className="absolute right-1 top-1 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={handleToggleVoiceSearch}
+                    className={`p-1 rounded-md transition-all relative cursor-pointer ${
+                      isListening 
+                        ? 'bg-red-500 text-white animate-pulse' 
+                        : 'text-gray-455 hover:text-[#0A1F44] hover:bg-slate-100'
+                    }`}
+                    title={isListening ? "Listening... click to stop" : "Speak to search"}
+                  >
+                    <Mic className="h-3.5 w-3.5" />
+                  </button>
+                  {gisSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setGisSearchQuery('')}
+                      className="p-1 text-gray-400 hover:text-red-500 rounded-md cursor-pointer"
+                      title="Clear query"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
+              {voiceError && (
+                <div className="text-[9px] text-amber-600 font-bold mt-1 flex items-center justify-between bg-amber-50 p-1 rounded border border-amber-200">
+                  <span>⚠️ {voiceError}</span>
+                  <button onClick={() => setVoiceError(null)} className="text-gray-400 underline hover:text-gray-600">dismiss</button>
+                </div>
+              )}
             </div>
 
             {/* Ward select filter */}

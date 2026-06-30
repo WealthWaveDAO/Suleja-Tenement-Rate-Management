@@ -588,16 +588,7 @@ export default function LoginPage({
                         <p className="text-[11px] text-gray-500 mt-0.5">Access property tax reports, outstanding bills & instant settlements.</p>
                       </div>
 
-                      {/* Client Login Access Activated Success Notice */}
-                      <div className="rounded-xl bg-emerald-50 border border-emerald-250 p-3 text-xs text-emerald-800 flex items-start gap-2.5">
-                        <span className="relative flex h-2 w-2 mt-1">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                        </span>
-                        <span className="font-semibold font-sans">
-                          💡 Client Login Access Activated: Any property ID or email is authorized instantly. Password validation is completely bypassed for simple review.
-                        </span>
-                      </div>
+                      {/* Taxpayer Portal Info */}
 
                       <div>
                         <label className="block text-xs font-bold text-emerald-800 uppercase tracking-wider mb-2">
